@@ -1,3 +1,17 @@
+## 2026-03-06 - US-041
+- Updated `internal/pipeline/runner.go`: added nil guard for `r.gen` (returns clear error when AI not configured); added `log.Printf("ERROR ...")` with raw output when JSON parse fails; `ErrInvalidAIOutput` already existed
+- Updated `internal/connector/connector.go`: added `ErrCredentialsMissing` typed error struct with VarName field and `NewErrCredentialsMissing(varName)` constructor
+- Updated all 5 connectors (github, notion, grafana, posthog, signoz) to return `connector.NewErrCredentialsMissing(...)` instead of `fmt.Errorf(...)` for missing credentials
+- Added `TestFirstRunEndpointsReturn200` to `internal/api/edge_cases_test.go`: verifies all 5 data endpoints return 200 before any sync
+- All tests pass with race detector: `go test -race ./...`
+- Files changed: `internal/pipeline/runner.go`, `internal/connector/connector.go`, all connector packages, `internal/api/edge_cases_test.go`
+- **Learnings for future iterations:**
+  - `ErrCredentialsMissing` in `internal/connector/connector.go` — use `errors.As` to check for this type in error chains
+  - Pipeline `generate()` now guards against nil `r.gen` — safe to call `pipeline.New(nil, st)` but all pipelines will return errors
+  - Raw AI output is logged at ERROR level in pipeline generate() when JSON parse fails
+  - `go test -race ./...` is the full race condition test command
+---
+
 ## 2026-03-06 - US-040
 - Fixed `internal/api/teams.go`: handleTeamSprint now defaults start_date_missing=true; clears to false when valid start_date found; avoids 500 when no sprint meta exists
 - Fixed `internal/tui/views/sprint.go`: total_sprints (M) rendered in amber (warningAmberStyle) when > 4
