@@ -91,6 +91,13 @@ func (s *Store) UpdateCatalogueAISuggestion(ctx context.Context, id int64, sugge
 	return nil
 }
 
+// TouchCatalogueItem updates updated_at to CURRENT_TIMESTAMP for the given catalogue item.
+func (s *Store) TouchCatalogueItem(ctx context.Context, id int64) error {
+	const q = `UPDATE source_catalogue SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, q, id)
+	return err
+}
+
 func (s *Store) getCatalogueByKey(ctx context.Context, sourceType, externalID string) (*SourceCatalogue, error) {
 	const q = `SELECT id, source_type, external_id, title, url, source_meta, ai_suggestion, status, created_at, updated_at FROM source_catalogue WHERE source_type = ? AND external_id = ?`
 	rows, err := s.db.QueryContext(ctx, q, sourceType, externalID)
