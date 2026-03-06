@@ -38,10 +38,10 @@ func New(host, apiKey string) *Client {
 
 func (c *Client) checkCredentials() error {
 	if c.host == "" {
-		return fmt.Errorf("posthog: POSTHOG_HOST credential is missing")
+		return connector.NewErrCredentialsMissing("POSTHOG_HOST")
 	}
 	if c.apiKey == "" {
-		return fmt.Errorf("posthog: POSTHOG_API_KEY credential is missing")
+		return connector.NewErrCredentialsMissing("POSTHOG_API_KEY")
 	}
 	return nil
 }

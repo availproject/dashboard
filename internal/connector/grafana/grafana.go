@@ -40,10 +40,10 @@ func New(baseURL, token string) *Client {
 
 func (c *Client) checkCredentials() error {
 	if c.baseURL == "" {
-		return fmt.Errorf("grafana: GRAFANA_BASE_URL credential is missing")
+		return connector.NewErrCredentialsMissing("GRAFANA_BASE_URL")
 	}
 	if c.token == "" {
-		return fmt.Errorf("grafana: GRAFANA_TOKEN credential is missing")
+		return connector.NewErrCredentialsMissing("GRAFANA_TOKEN")
 	}
 	return nil
 }

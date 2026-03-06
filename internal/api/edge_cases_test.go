@@ -122,3 +122,34 @@ func TestPostSyncConflict(t *testing.T) {
 	}
 }
 
+// TestFirstRunEndpointsReturn200 verifies that data endpoints return HTTP 200
+// with empty/null fields before any sync has been completed.
+func TestFirstRunEndpointsReturn200(t *testing.T) {
+	deps, st, token := newTestDeps(t)
+
+	team, err := st.CreateTeam(context.Background(), "Team A")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+
+	router := NewRouter(deps)
+
+	endpoints := []string{
+		fmt.Sprintf("/teams/%d/sprint", team.ID),
+		fmt.Sprintf("/teams/%d/goals", team.ID),
+		fmt.Sprintf("/teams/%d/workload", team.ID),
+		fmt.Sprintf("/teams/%d/velocity", team.ID),
+		fmt.Sprintf("/teams/%d/metrics", team.ID),
+	}
+
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(http.MethodGet, ep, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200, got %d (body: %s)", ep, rec.Code, rec.Body.String())
+		}
+	}
+}
+

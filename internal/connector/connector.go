@@ -1,6 +1,24 @@
 package connector
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
+
+// ErrCredentialsMissing is returned by a connector when a required environment
+// variable or credential is not set.
+type ErrCredentialsMissing struct {
+	VarName string
+}
+
+func (e *ErrCredentialsMissing) Error() string {
+	return fmt.Sprintf("missing required credential: %s", e.VarName)
+}
+
+// NewErrCredentialsMissing creates an ErrCredentialsMissing for the given env var.
+func NewErrCredentialsMissing(varName string) error {
+	return &ErrCredentialsMissing{VarName: varName}
+}
 
 // DiscoveredItem represents a single item discovered from an external source.
 type DiscoveredItem struct {

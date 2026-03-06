@@ -38,7 +38,7 @@ func New(token string) *Client {
 
 func (c *Client) checkToken() error {
 	if c.token == "" || c.client == nil {
-		return fmt.Errorf("github: GITHUB_TOKEN credential is missing")
+		return connector.NewErrCredentialsMissing("GITHUB_TOKEN")
 	}
 	return nil
 }

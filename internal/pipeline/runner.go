@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/your-org/dashboard/internal/ai"
 	"github.com/your-org/dashboard/internal/store"
@@ -70,6 +71,10 @@ func (r *Runner) activeAnnotations(ctx context.Context, teamID *int64) ([]store.
 // unmarshals the result into dst. Returns ErrInvalidAIOutput when the JSON
 // response cannot be unmarshaled.
 func (r *Runner) generate(ctx context.Context, pipeline, schema string, teamID *int64, rawInputs map[string]any, annotations []store.Annotation, dst any) error {
+	if r.gen == nil {
+		return fmt.Errorf("%s: AI generator not configured", pipeline)
+	}
+
 	prompt := buildPrompt(schema, rawInputs, annotations)
 	inputs := map[string]any{"prompt": prompt}
 
@@ -79,6 +84,7 @@ func (r *Runner) generate(ctx context.Context, pipeline, schema string, teamID *
 	}
 
 	if err := json.Unmarshal([]byte(output), dst); err != nil {
+		log.Printf("ERROR pipeline %s: invalid AI output (raw): %s", pipeline, output)
 		return ErrInvalidAIOutput
 	}
 	return nil

@@ -34,7 +34,7 @@ func New(token string) *Client {
 
 func (c *Client) checkToken() error {
 	if c.token == "" || c.nc == nil {
-		return fmt.Errorf("notion: NOTION_TOKEN credential is missing")
+		return connector.NewErrCredentialsMissing("NOTION_TOKEN")
 	}
 	return nil
 }

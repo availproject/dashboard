@@ -38,10 +38,10 @@ func New(baseURL, apiKey string) *Client {
 
 func (c *Client) checkCredentials() error {
 	if c.baseURL == "" {
-		return fmt.Errorf("signoz: SIGNOZ_BASE_URL credential is missing")
+		return connector.NewErrCredentialsMissing("SIGNOZ_BASE_URL")
 	}
 	if c.apiKey == "" {
-		return fmt.Errorf("signoz: SIGNOZ_API_KEY credential is missing")
+		return connector.NewErrCredentialsMissing("SIGNOZ_API_KEY")
 	}
 	return nil
 }
