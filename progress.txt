@@ -1,3 +1,14 @@
+## 2026-03-06 - US-033
+- Created `internal/tui/views/workload.go`: WorkloadView loads GetWorkload on Init; tabular per-member display (name, estimated days, label); j/k navigation through members; HIGH=red, NORMAL=default, LOW=dim; `a` pushes AnnotateView with team-level tier pre-selected; footer with last synced timestamp
+- Created `internal/tui/views/velocity.go`: VelocityView loads GetVelocity on Init; sparkline using unicode block chars (▁▂▃▄▅▆▇█) normalized to max score; tabular breakdown per sprint (label, score, issues, PRs, commits); footer with last synced timestamp; no-data placeholder
+- Updated `internal/tui/views/team.go`: wired case 2 (WorkloadView) and case 3 (VelocityView) in pushSubView
+- Files changed: `internal/tui/views/workload.go`, `internal/tui/views/velocity.go`, `internal/tui/views/team.go`
+- **Learnings for future iterations:**
+  - Workload annotation uses team-level tier (not item-level) with empty itemRef — pass `"team"` as tier and `""` as itemRef to NewAnnotateView
+  - Sparkline normalization: divide each score by max, multiply by (len(blocks)-1), clamp to block index range
+  - `riskNormalStyle` (color "7") used for NORMAL workload label; HIGH=riskHighStyle (red), LOW=dimStyle (gray)
+---
+
 ## 2026-03-06 - US-032
 - Created `internal/tui/views/goals.go`: GoalsView loads GetGoals on Init; two sections (Goals + Concerns) separated by a unicode divider; j/k navigation through combined list; concerns colored by severity (HIGH=red, MEDIUM=yellow, LOW=gray); stale_annotation_ keys prefixed [STALE ANNOTATION] in amber (warningAmberStyle); `a` pushes AnnotateView; footer with last synced timestamp
 - Created `internal/tui/views/annotate.go`: AnnotateView with textarea.Model (charmbracelet/bubbles); Tab toggles tier between Item-level and Team-level (default item); Ctrl+Enter submits via POST /annotations; success returns PopViewMsg to pop the view; error displayed inline
