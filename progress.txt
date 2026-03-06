@@ -1,3 +1,33 @@
+## 2026-03-06 - US-025
+- Implemented `GET /config/sources`: lists all catalogue items with their source configs, grouped by catalogue_id; includes ai_suggested_purpose from ai_suggestion field
+- Implemented `PUT /config/sources/{id}`: updates catalogue status and upserts source_config; handles current_plan rollover (archive item annotations + delete old config before inserting new)
+- Implemented `GET /config/annotations`: returns all annotations grouped by tier (`item` vs `team`) including archived
+- Implemented `POST /config/annotations`, `PUT /config/annotations/{id}`, `DELETE /config/annotations/{id}`
+- Implemented shared helpers `sharedCreateAnnotation`, `sharedUpdateAnnotation`, `sharedDeleteAnnotation` used by both `/config/annotations` and `/annotations` routes
+- Added migration `0010_source_configs_meta` to add `config_meta TEXT` to `source_configs`
+- Updated `SourceConfig` model and all store methods to include `config_meta` (6-field scan)
+- Added `GetSourceConfigsByItemID`, `FindCurrentPlanForTeam`, `ListAllAnnotations` to store
+- Updated `UpsertSourceConfig` signature to include `configMeta sql.NullString` (4th param); updated `store_test.go` call sites
+- Files changed: `internal/store/migrations/0010_*`, `internal/store/models.go`, `internal/store/source_configs.go`, `internal/store/annotations.go`, `internal/store/store_test.go`, `internal/api/config_sources.go`, `internal/api/config_annotations.go`, `internal/api/annotations.go`
+- **Learnings for future iterations:**
+  - `UpsertSourceConfig` now takes `configMeta sql.NullString` as 4th param; update any future call sites
+  - Rollover logic: `FindCurrentPlanForTeam` → `ArchiveItemAnnotationsForPlan` → `DeleteSourceConfig` → `UpsertSourceConfig`
+  - `ListAllAnnotations` returns all annotations regardless of team (used by config panel); `ListAnnotations` filters by team_id
+  - Shared annotation mutation helpers in `config_annotations.go` are used by both `/config/annotations` and `/annotations` routes
+---
+
+## 2026-03-06 - US-024
+- Implemented all 6 config teams/members CRUD handlers in `internal/api/config_teams.go`
+- Added `GetTeam(ctx, id)` to `internal/store/teams.go` (needed to return updated team after PUT)
+- Extended `AddMember` and `UpdateMember` signatures to include `notionUserID sql.NullString` parameter
+- Updated `store_test.go` call sites with the new 5-arg signatures
+- Files changed: `internal/api/config_teams.go`, `internal/store/teams.go`, `internal/store/store_test.go`
+- **Learnings for future iterations:**
+  - `UpdateTeam` returns only error (not the updated record); use `GetTeam` after update to return the full record
+  - `AddMember`/`UpdateMember` now take `notionUserID` as 4th param (before `role`): `(ctx, teamID, name, githubLogin, notionUserID, role)`
+  - DELETE handlers return 204 No Content (no body); no need to call `DeleteTeam`/`DeleteMember` — cascade is handled by FK in schema
+---
+
 ## 2026-03-06 - US-022
 - Implemented `GET /org/overview`: loads all teams, reads sprint_parse/concerns/goal_extraction/workload ai_cache by pipeline+team, computes cross-team workload aggregate, loads org-level alignment cache, returns full org overview JSON
 - Implemented `GET /teams`: returns teams with members including notion_user_id (null until set)
