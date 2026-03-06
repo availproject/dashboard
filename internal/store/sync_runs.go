@@ -79,6 +79,29 @@ func (s *Store) GetRunningSyncRun(ctx context.Context, scope string, teamID sql.
 	return scanSyncRun(rows)
 }
 
+// GetLastCompletedSyncRun returns the most recent sync_run with status='done'
+// for the given scope and teamID, or sql.ErrNoRows if none exists.
+func (s *Store) GetLastCompletedSyncRun(ctx context.Context, scope string, teamID sql.NullInt64) (*SyncRun, error) {
+	const base = `SELECT id, team_id, scope, status, error, started_at, finished_at FROM sync_runs WHERE scope = ? AND status = 'done'`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if teamID.Valid {
+		rows, err = s.db.QueryContext(ctx, base+` AND team_id = ? ORDER BY id DESC LIMIT 1`, scope, teamID.Int64)
+	} else {
+		rows, err = s.db.QueryContext(ctx, base+` AND team_id IS NULL ORDER BY id DESC LIMIT 1`, scope)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
+	return scanSyncRun(rows)
+}
+
 func scanSyncRun(rows *sql.Rows) (*SyncRun, error) {
 	var r SyncRun
 	if err := rows.Scan(&r.ID, &r.TeamID, &r.Scope, &r.Status, &r.Error, &r.StartedAt, &r.FinishedAt); err != nil {

@@ -108,7 +108,7 @@ func (s *Store) DeleteMember(ctx context.Context, id int64) error {
 
 // GetTeamMembers returns all members of the given team ordered by id.
 func (s *Store) GetTeamMembers(ctx context.Context, teamID int64) ([]*TeamMember, error) {
-	const q = `SELECT id, team_id, name, github_login, role, created_at FROM team_members WHERE team_id = ? ORDER BY id`
+	const q = `SELECT id, team_id, name, github_login, role, notion_user_id, created_at FROM team_members WHERE team_id = ? ORDER BY id`
 	rows, err := s.db.QueryContext(ctx, q, teamID)
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func (s *Store) GetTeamMembers(ctx context.Context, teamID int64) ([]*TeamMember
 }
 
 func (s *Store) getMemberByID(ctx context.Context, id int64) (*TeamMember, error) {
-	const q = `SELECT id, team_id, name, github_login, role, created_at FROM team_members WHERE id = ?`
+	const q = `SELECT id, team_id, name, github_login, role, notion_user_id, created_at FROM team_members WHERE id = ?`
 	rows, err := s.db.QueryContext(ctx, q, id)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ func (s *Store) getMemberByID(ctx context.Context, id int64) (*TeamMember, error
 
 func scanMember(rows *sql.Rows) (*TeamMember, error) {
 	var m TeamMember
-	if err := rows.Scan(&m.ID, &m.TeamID, &m.Name, &m.GithubLogin, &m.Role, &m.CreatedAt); err != nil {
+	if err := rows.Scan(&m.ID, &m.TeamID, &m.Name, &m.GithubLogin, &m.Role, &m.NotionUserID, &m.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &m, nil

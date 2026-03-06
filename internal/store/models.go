@@ -23,12 +23,13 @@ type Team struct {
 
 // TeamMember represents a row in the team_members table.
 type TeamMember struct {
-	ID          int64
-	TeamID      int64
-	Name        string
-	GithubLogin sql.NullString
-	Role        sql.NullString
-	CreatedAt   time.Time
+	ID           int64
+	TeamID       int64
+	Name         string
+	GithubLogin  sql.NullString
+	Role         sql.NullString
+	NotionUserID sql.NullString
+	CreatedAt    time.Time
 }
 
 // SourceCatalogue represents a row in the source_catalogue table.

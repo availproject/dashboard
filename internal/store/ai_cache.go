@@ -54,6 +54,29 @@ func (s *Store) PruneStaleCache(ctx context.Context, olderThan time.Duration) er
 	return err
 }
 
+// GetLatestCacheByPipeline returns the most recently created ai_cache entry
+// for the given pipeline and teamID, or sql.ErrNoRows if none exists.
+func (s *Store) GetLatestCacheByPipeline(ctx context.Context, pipeline string, teamID sql.NullInt64) (*AICache, error) {
+	const base = `SELECT id, input_hash, pipeline, team_id, output, created_at FROM ai_cache WHERE pipeline = ?`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if teamID.Valid {
+		rows, err = s.db.QueryContext(ctx, base+` AND team_id = ? ORDER BY id DESC LIMIT 1`, pipeline, teamID.Int64)
+	} else {
+		rows, err = s.db.QueryContext(ctx, base+` AND team_id IS NULL ORDER BY id DESC LIMIT 1`, pipeline)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
+	return scanAICache(rows)
+}
+
 func (s *Store) findCacheEntry(ctx context.Context, inputHash, pipeline string, teamID sql.NullInt64) (*AICache, error) {
 	var (
 		rows *sql.Rows
