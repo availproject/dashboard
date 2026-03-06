@@ -1,3 +1,15 @@
+## 2026-03-06 - US-037
+- Created `internal/tui/views/config/config_annotations.go`: ConfigAnnotationsView loads all annotations via GetConfigAnnotations; team-level then item-level sections; archived entries show "[Archived]" in dim; e edits content (textarea, Ctrl+S to save); d hard-deletes with y/N confirmation
+- Created `internal/tui/views/config/config_users.go`: ConfigUsersView with multi-step input flow for n (username→password→role); e edits role then optional password; d deletes with y/N confirm; role normalized to view/edit
+- Updated `internal/tui/views/config/config_root.go`: wired case 3 (Annotations) and case 4 (Users) in pushSubView
+- Files changed: `internal/tui/views/config/config_annotations.go`, `internal/tui/views/config/config_users.go`, `internal/tui/views/config/config_root.go`
+- **Learnings for future iterations:**
+  - `textarea.Blink` is the Init cmd for textarea.Model in edit mode
+  - `textinput.Blink` is the Init cmd for textinput.Model in focus mode
+  - Multi-step user creation: use mode progression (username → password → role) with `advanceInputMode()` pattern
+  - `PutConfigUser(id, role, password)` — pass empty string for password to keep existing
+---
+
 ## 2026-03-06 - US-036
 - Added PostConfigTeam/PutConfigTeam/DeleteConfigTeam/PostConfigMember/PutConfigMember/DeleteConfigMember to `internal/tui/client/client.go` with TeamConfigResponse and MemberConfigResponse types
 - Created `internal/tui/views/config/config_root.go`: ConfigRootView sub-menu with 5 items; Teams & Members and Sources are wired; others return nil (stubs)
