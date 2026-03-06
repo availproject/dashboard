@@ -1,3 +1,30 @@
+## 2026-03-06 - US-032
+- Created `internal/tui/views/goals.go`: GoalsView loads GetGoals on Init; two sections (Goals + Concerns) separated by a unicode divider; j/k navigation through combined list; concerns colored by severity (HIGH=red, MEDIUM=yellow, LOW=gray); stale_annotation_ keys prefixed [STALE ANNOTATION] in amber (warningAmberStyle); `a` pushes AnnotateView; footer with last synced timestamp
+- Created `internal/tui/views/annotate.go`: AnnotateView with textarea.Model (charmbracelet/bubbles); Tab toggles tier between Item-level and Team-level (default item); Ctrl+Enter submits via POST /annotations; success returns PopViewMsg to pop the view; error displayed inline
+- Added `PopViewMsg` type to `internal/tui/views/annotate.go`
+- Updated `internal/tui/app.go`: handles `views.PopViewMsg` to pop top view from stack
+- Updated `internal/tui/views/team.go`: case 1 in pushSubView now pushes NewGoalsView
+- Files changed: `internal/tui/views/goals.go`, `internal/tui/views/annotate.go`, `internal/tui/views/team.go`, `internal/tui/app.go`
+- **Learnings for future iterations:**
+  - `PopViewMsg` is defined in `internal/tui/views/annotate.go`; App handles it to pop the top view (complement to PushViewMsg)
+  - `textarea.Blink` is the Init cmd for textarea.Model (same pattern as textinput.Blink)
+  - `warningAmberStyle` (color "214") is defined in `sprint.go` and reused in `goals.go` for stale annotation prefix — no need to redefine
+  - `AnnotateView` accepts teamID (int64), tier (string), itemRef (string), label (string) — push it from any view using `PushViewMsg`
+  - For team-tier annotations, itemRef is set to nil (only passed for item-tier); tier is toggled by Tab
+---
+
+## 2026-03-06 - US-031
+- Updated `internal/tui/views/team.go`: full sub-menu view with Sprint & Plan Status, Goals & Concerns, Resource/Workload, Velocity, Business Metrics; j/k + Enter to drill in; r triggers team sync via PostSync("team", &teamID); poll loop mirrors org_overview pattern
+- Created `internal/tui/views/sprint.go`: SprintView loads GetSprint on Init; shows Week N of M; amber warning (color "214") for start_date_missing; red warning (errorStyle) for next_plan_start_risk; lists goals; footer with last synced timestamp; no-data placeholder
+- Only Sprint & Plan Status drills into SprintView; other menu items are stubs (return nil) for future stories
+- Files changed: `internal/tui/views/team.go`, `internal/tui/views/sprint.go`
+- **Learnings for future iterations:**
+  - `warningAmberStyle` uses lipgloss color "214" (orange/amber) — distinct from yellow ("11") used for sync banner
+  - Team sync uses lowercase "r" (not uppercase "R" like org sync) since we're scoped to a team
+  - `pushSubView()` returns nil for unimplemented menu items — App.Update ignores nil tea.Cmd safely
+  - Other sub-views (goals, workload, velocity, metrics) are wired in US-032, US-033, US-034; update `pushSubView()` switch in team.go when implementing those
+---
+
 ## 2026-03-06 - US-030
 - Created `internal/tui/views/org_overview.go`: OrgOverviewView loads org overview via GetOrgOverview on Init
 - Team cards show `[Team Name]  Sprint N/M  |  Risk: HIGH  |  Focus: ...` with Lip Gloss risk colors (HIGH=red, MEDIUM=yellow, LOW=green)
