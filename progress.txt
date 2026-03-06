@@ -1,3 +1,14 @@
+## 2026-03-06 - US-017
+- Implemented `VelocityResult`/`SprintVelocity`/`VelocityBreakdown`/`VelocitySprint` structs and `RunVelocity` in `internal/pipeline/velocity.go`: takes sprints (up to 4) with closed_issues, merged_prs, commit_count; outputs normalized score + breakdown per sprint
+- Implemented `AlignmentResult`/`TeamAlignment` structs and `RunAlignment` in `internal/pipeline/alignment.go`: org-level pipeline (nil teamID), takes org_goals_text + team_goals map; outputs per-team aligned bool + notes, plus flags
+- Implemented `DiscoverySuggestionResult` struct and `RunDiscoverySuggestion` in `internal/pipeline/discovery.go`: no teamID (item not yet tagged), takes title + excerpt; outputs suggested_purpose, confidence, reasoning
+- Files changed: `internal/pipeline/velocity.go`, `internal/pipeline/alignment.go`, `internal/pipeline/discovery.go`
+- **Learnings for future iterations:**
+  - `alignment` and `discovery_suggestion` use nil teamID in CachedGenerator (org-level / untagged item scope)
+  - `velocity` pipeline name is already in ai_cache CHECK constraint — no migration needed
+  - All three follow the same buildPrompt pattern as previous pipelines
+---
+
 ## 2026-03-06 - US-016
 - Implemented `ConcernsResult`/`Concern` structs and `RunConcerns` in `internal/pipeline/concerns.go`: takes open_issues, merged_prs, sprint_plan_text, extracted_goals, sprint_meta + active annotations; outputs concerns with key, summary, explanation, severity
 - Implemented `WorkloadResult`/`MemberWorkload`/`WorkloadMember`/`SprintWindow` structs and `RunWorkload` in `internal/pipeline/workload.go`: takes members, sprint_window, standard_sprint_days; outputs per-member estimated_days and LOW/NORMAL/HIGH label
