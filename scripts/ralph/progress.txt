@@ -10,6 +10,10 @@
 - golang-migrate wired with `database/sqlite` (modernc.org/sqlite, pure Go) + `source/iofs`; driver name is `"sqlite"` (sql.Open)
 - nullable DB columns → `sql.NullString`, `sql.NullInt64`, `sql.NullTime` in model structs
 - `Store.db` is unexported `*sql.DB`; use `store.New(path)` to open + migrate in one step
+- Store query methods: use `ExecContext` + `LastInsertId` for INSERT (not RETURNING), then fetch by ID
+- Test helper: use `t.TempDir() + "/test.db"` with `New()` for store tests (avoids `:memory:` connection-sharing issues with golang-migrate)
+- Standard testing package (no testify); use `t.Fatal`/`t.Error` directly
+- `scanMember` takes `*sql.Rows` (not `*sql.Row`) since team_members uses QueryContext for multi-row scans
 ---
 
 # Ralph Progress Log
@@ -56,4 +60,18 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - Migration source: `iofs.New(migrationsFS, "migrations")` where migrationsFS is the embed.FS from embed.go
   - `migrate.NewWithInstance("iofs", src, "sqlite", driver)` then `.Up()` ignoring `migrate.ErrNoChange`
   - nullable SQL columns: use `sql.NullString`/`sql.NullInt64`/`sql.NullTime` in model structs
+---
+
+## 2026-03-06 - US-004
+- Implemented `internal/store/users.go`: CreateUser, GetUserByUsername, GetUserByID, UpdateUser, DeleteUser, ListUsers
+- Implemented `internal/store/teams.go`: CreateTeam, UpdateTeam, DeleteTeam, ListTeams, AddMember, UpdateMember, DeleteMember, GetTeamMembers
+- Created `internal/store/store_test.go` with CRUD round-trip tests for users and teams
+- Files changed: internal/store/users.go, internal/store/teams.go, internal/store/store_test.go
+- `go build ./...`, `go vet ./...`, and `go test ./internal/store/...` all pass
+- **Learnings for future iterations:**
+  - Use `ExecContext` + `LastInsertId` for INSERT then fetch by ID; avoids RETURNING compatibility concerns
+  - Test store with `t.TempDir()/test.db` via `New()` — more reliable than `:memory:` with golang-migrate's connection management
+  - `UpdateUser`/`UpdateTeam` return `sql.ErrNoRows` when RowsAffected == 0 (not-found sentinel)
+  - `scanMember` helper takes `*sql.Rows` (not `*sql.Row`) since fetching by ID uses QueryContext + rows.Next()
+  - No testify in go.mod; use standard `testing` package with `t.Fatal`/`t.Error`
 ---
