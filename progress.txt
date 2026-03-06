@@ -1,3 +1,14 @@
+## 2026-03-06 - US-035
+- Created `internal/tui/components/banner.go`: Banner struct with Active/Label/Failed/FailedMsg fields; Render() prepends banner to view output; in-progress=yellow, failed=red bold + "Press Enter to dismiss"
+- Updated `internal/tui/app.go`: added SyncStartedMsg/SyncFailedMsg types; refactored SyncDoneMsg (now only for success); SyncPoller.Poll() returns SyncFailedMsg on error; App.banner updated on each msg; App.View() prepends banner.Render(); Enter dismisses failed banner
+- Files changed: `internal/tui/components/banner.go`, `internal/tui/app.go`
+- **Learnings for future iterations:**
+  - `components` package lives at `internal/tui/components/`; import it from `tui` package (not from `views` — would be circular)
+  - `SyncStartedMsg{RunID, Label}` triggers App-level banner + polling; views can emit this to hook into global banner
+  - `SyncDoneMsg` = success (banner clears); `SyncFailedMsg{Err}` = failure (red banner stays until Enter)
+  - `SyncPoller.Poll()` now returns SyncFailedMsg on status="error", SyncDoneMsg on "done"
+---
+
 ## 2026-03-06 - US-034
 - Created `internal/tui/views/metrics.go`: MetricsView loads GetMetrics on Init; lists configured panels (title + latest value); nil value shown as dim "—"; footer with last synced timestamp; no-data placeholder
 - Updated `internal/tui/views/team.go`: wired case 4 (MetricsView) in pushSubView — all 5 team menu items are now wired
