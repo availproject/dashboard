@@ -1,3 +1,19 @@
+## 2026-03-06 - US-028
+- Created `internal/tui/client/client.go`: typed HTTP client with token file storage at `~/.dashboard/token`
+- Client handles 401 by attempting token refresh via POST /auth/refresh; on failure clears token file and returns `ErrUnauthenticated`
+- Defined all response mirror types in the client package (OrgOverviewResponse, TeamItem, SprintResponse, GoalsResponse, WorkloadResponse, VelocityResponse, MetricsResponse, SyncRunResponse, AnnotationResponse, SourceItemResponse, GroupedAnnotationsResponse, UserResponse)
+- Implemented all required methods: Login, GetOrgOverview, GetTeams, GetSprint, GetGoals, GetWorkload, GetVelocity, GetMetrics, PostSync, GetSyncRun, PostAnnotation, PutAnnotation, DeleteAnnotation, GetConfigSources, PutConfigSource, PostDiscover, GetConfigAnnotations, GetConfigUsers, PostConfigUser, PutConfigUser, DeleteConfigUser
+- Created `internal/tui/app.go`: App struct with views []tea.Model stack, client *client.Client, syncPoller *SyncPoller; Enter (via PushViewMsg) pushes view; Esc/Backspace pops; q quits when stack depth ≤ 1
+- SyncPoller polls GET /sync/{run_id} every 2s via tea.Cmd loop (syncPollMsg → Poll → SyncDoneMsg)
+- Updated `cmd/tui/main.go` to launch Bubble Tea program with App as root model
+- Files changed: `internal/tui/client/client.go`, `internal/tui/app.go`, `cmd/tui/main.go`
+- **Learnings for future iterations:**
+  - Client mirror types live in `internal/tui/client` — do NOT import `internal/api` from TUI (would create import cycle potential)
+  - `SyncRunResponse` uses capitalized field names (ID, Status, Scope, Error) since `store.SyncRun` has no json tags and is serialized as-is by `writeJSON`
+  - App handles `PushViewMsg` — views push new views by returning `tea.Cmd` that returns `PushViewMsg{View: newView}`
+  - SyncPoller polling loop: Poll() returns a cmd that sleeps 2s, checks status; if still running returns `syncPollMsg`; App.Update re-dispatches with `a.syncPoller.Poll(m.RunID)`
+---
+
 ## 2026-03-06 - US-027
 - All rollover logic was already implemented in US-025 (config_sources.go, store/annotations.go, pipeline/runner.go)
 - Added explicit `TestRolloverAnnotations` unit test to `internal/store/store_test.go`
