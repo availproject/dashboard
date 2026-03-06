@@ -458,6 +458,54 @@ func TestAnnotationCRUD(t *testing.T) {
 	}
 }
 
+// TestRolloverAnnotations verifies that ArchiveItemAnnotationsForPlan archives
+// only item-tier annotations and leaves team-tier annotations untouched.
+func TestRolloverAnnotations(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	team, err := s.CreateTeam(ctx, "RolloverTeam")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
+
+	// Create one item-tier annotation.
+	itemAnn, err := s.CreateAnnotation(ctx, teamID, sql.NullString{String: "issue-99", Valid: true}, "item", "blocked on dep")
+	if err != nil {
+		t.Fatalf("CreateAnnotation (item): %v", err)
+	}
+
+	// Create one team-tier annotation.
+	teamAnn, err := s.CreateAnnotation(ctx, teamID, sql.NullString{}, "team", "team on vacation")
+	if err != nil {
+		t.Fatalf("CreateAnnotation (team): %v", err)
+	}
+
+	// Trigger rollover.
+	if err := s.ArchiveItemAnnotationsForPlan(ctx, team.ID); err != nil {
+		t.Fatalf("ArchiveItemAnnotationsForPlan: %v", err)
+	}
+
+	// Reload and verify item annotation is archived.
+	anns, err := s.ListAnnotations(ctx, teamID)
+	if err != nil {
+		t.Fatalf("ListAnnotations: %v", err)
+	}
+	for _, a := range anns {
+		switch a.ID {
+		case itemAnn.ID:
+			if a.Archived != 1 {
+				t.Errorf("item annotation: want archived=1, got %d", a.Archived)
+			}
+		case teamAnn.ID:
+			if a.Archived != 0 {
+				t.Errorf("team annotation: want archived=0, got %d", a.Archived)
+			}
+		}
+	}
+}
+
 func TestUpdateAnnotation_NotFound(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
