@@ -79,6 +79,26 @@ func (s *Store) ListAnnotations(ctx context.Context, teamID sql.NullInt64) ([]*A
 	return annotations, rows.Err()
 }
 
+// ListAllAnnotations returns all annotations (all teams, all tiers, including archived) ordered by id.
+func (s *Store) ListAllAnnotations(ctx context.Context) ([]*Annotation, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, team_id, item_ref, tier, content, archived, created_at, updated_at FROM annotations ORDER BY id`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var annotations []*Annotation
+	for rows.Next() {
+		a, err := scanAnnotation(rows)
+		if err != nil {
+			return nil, err
+		}
+		annotations = append(annotations, a)
+	}
+	return annotations, rows.Err()
+}
+
 // ArchiveItemAnnotationsForPlan archives all item-tier annotations for the given team.
 func (s *Store) ArchiveItemAnnotationsForPlan(ctx context.Context, teamID int64) error {
 	_, err := s.db.ExecContext(ctx,

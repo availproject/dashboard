@@ -52,6 +52,7 @@ type SourceConfig struct {
 	CatalogueID int64
 	TeamID      sql.NullInt64
 	Purpose     string
+	ConfigMeta  sql.NullString
 	CreatedAt   time.Time
 }
 

@@ -308,7 +308,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
 
 	// UpsertSourceConfig (insert)
-	sc, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan")
+	sc, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan", sql.NullString{})
 	if err != nil {
 		t.Fatalf("UpsertSourceConfig: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 	}
 
 	// UpsertSourceConfig (idempotent - returns existing)
-	sc2, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan")
+	sc2, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan", sql.NullString{})
 	if err != nil {
 		t.Fatalf("UpsertSourceConfig (idempotent): %v", err)
 	}
@@ -332,7 +332,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 	}
 
 	// UpsertSourceConfig (org-level, team_id IS NULL)
-	orgConfig, err := s.UpsertSourceConfig(ctx, item.ID, sql.NullInt64{}, "org_goals")
+	orgConfig, err := s.UpsertSourceConfig(ctx, item.ID, sql.NullInt64{}, "org_goals", sql.NullString{})
 	if err != nil {
 		t.Fatalf("UpsertSourceConfig (org): %v", err)
 	}
