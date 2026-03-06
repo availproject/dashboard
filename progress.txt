@@ -1,3 +1,13 @@
+## 2026-03-06 - US-039
+- Created `scripts/smoke_test.sh`: starts server in background, logs in (saves token), calls GET /teams, GET /org/overview, POST /sync (org), polls sync run until done/timeout, GET /teams/{id}/sprint; prints PASS/FAIL summary; exits 1 on failure
+- Script is chmod +x
+- Files changed: `scripts/smoke_test.sh`
+- **Learnings for future iterations:**
+  - Smoke test uses `BASE_URL`, `ADMIN_USER`, `ADMIN_PASS`, `CONFIG` env vars for configuration
+  - SyncRun status field is `Status` (capital S) in JSON — matches store.SyncRun struct without json tags
+  - Script skips sprint test gracefully if no teams exist
+---
+
 ## 2026-03-06 - US-038
 - Created `internal/sync/autotag.go`: Engine.AutoTag iterates active github_project catalogue items, parses source_meta for owner/repo/project_id, builds teamLabelMap from ListTeams, calls github.AutoTagIssues per project
 - Created `internal/api/admin.go`: GET /admin/autotag (edit role) calls engine.AutoTag and returns {status: "ok"}
