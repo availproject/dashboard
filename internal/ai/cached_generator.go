@@ -44,7 +44,17 @@ func (c *CachedGenerator) Generate(ctx context.Context, pipeline string, teamID 
 		return entry.Output, nil
 	}
 
-	output, err := c.inner.Generate(ctx, canonical)
+	// If the caller placed the full prompt in inputs["prompt"], send that to the
+	// inner generator directly. Otherwise fall back to the canonical JSON so the
+	// inner generator still receives a deterministic, content-rich string.
+	prompt := canonical
+	if p, ok := inputs["prompt"]; ok {
+		if ps, ok := p.(string); ok && ps != "" {
+			prompt = ps
+		}
+	}
+
+	output, err := c.inner.Generate(ctx, prompt)
 	if err != nil {
 		return "", err
 	}

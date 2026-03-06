@@ -1,3 +1,16 @@
+## 2026-03-06 - US-015
+- Implemented shared `buildPrompt` in `internal/pipeline/shared.go`: wraps schema + inputs + optional annotations in natural language prompt with XML tags
+- Implemented `SprintParseResult` struct and `RunSprintParse` in `internal/pipeline/sprint_parse.go`: calls CachedGenerator, parses JSON output, upserts sprint_meta with planType="current"
+- Implemented `GoalExtractionResult`/`ExtractedGoal` structs and `RunGoalExtraction` in `internal/pipeline/goal_extraction.go`
+- Modified `internal/ai/cached_generator.go`: if `inputs["prompt"]` is a non-empty string, pass it to the inner generator instead of canonical JSON (canonical JSON still used as cache key)
+- Files changed: `internal/ai/cached_generator.go`, `internal/pipeline/shared.go`, `internal/pipeline/sprint_parse.go`, `internal/pipeline/goal_extraction.go`
+- **Learnings for future iterations:**
+  - Pipeline convention: build prompt via `buildPrompt(schema, rawInputs, annotations)`, put result in `inputs["prompt"]`, pass `nil` annotations to CachedGenerator (annotations are embedded in the prompt string)
+  - CachedGenerator now uses `inputs["prompt"]` as the actual prompt to the inner generator; canonical JSON (which includes the prompt) is still the cache key
+  - `GoalExtractionPipeline = "goal_extraction"` — this name is in the ai_cache CHECK constraint; check constraint list before adding new pipeline names
+  - `UpsertSprintMeta` called with `planType = "current"` for current sprint plans; endDate left null since schema does not include it
+---
+
 ## Codebase Patterns
 - `ai_cache.pipeline` has a CHECK constraint: must be one of `sprint_parse`, `concerns`, `goal_extraction`, `workload`, `velocity`, `alignment`, `discovery_suggestion`
 - `ai_cache.team_id` has a FOREIGN KEY constraint to teams table; tests must create a real team before using a team ID
@@ -11,6 +24,7 @@
 - SigNoz uses `SIGNOZ-API-KEY` header (not `Authorization: Bearer`)
 - Always use `strings.TrimRight(baseURL, "/")` to normalize base URLs
 - `go build ./...` and `go vet ./...` are the quality checks
+- Pipeline prompt pattern: `buildPrompt(schema, rawInputs, annotations)` → put in `inputs["prompt"]` → call `CachedGenerator.Generate(ctx, pipelineName, &teamID, inputs, nil)`
 - Always use `IF NOT EXISTS` for migrations
 - Config uses `gopkg.in/yaml.v3` for YAML loading
 
