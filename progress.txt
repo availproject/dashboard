@@ -1,3 +1,12 @@
+## 2026-03-06 - US-034
+- Created `internal/tui/views/metrics.go`: MetricsView loads GetMetrics on Init; lists configured panels (title + latest value); nil value shown as dim "—"; footer with last synced timestamp; no-data placeholder
+- Updated `internal/tui/views/team.go`: wired case 4 (MetricsView) in pushSubView — all 5 team menu items are now wired
+- Files changed: `internal/tui/views/metrics.go`, `internal/tui/views/team.go`
+- **Learnings for future iterations:**
+  - All 5 team menu items (sprint=0, goals=1, workload=2, velocity=3, metrics=4) are now wired in pushSubView
+  - MetricsPanel.Value is *string (nullable); display "—" when nil
+---
+
 ## 2026-03-06 - US-033
 - Created `internal/tui/views/workload.go`: WorkloadView loads GetWorkload on Init; tabular per-member display (name, estimated days, label); j/k navigation through members; HIGH=red, NORMAL=default, LOW=dim; `a` pushes AnnotateView with team-level tier pre-selected; footer with last synced timestamp
 - Created `internal/tui/views/velocity.go`: VelocityView loads GetVelocity on Init; sparkline using unicode block chars (▁▂▃▄▅▆▇█) normalized to max score; tabular breakdown per sprint (label, score, issues, PRs, commits); footer with last synced timestamp; no-data placeholder
