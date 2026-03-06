@@ -66,6 +66,10 @@ func (v *ConfigRootView) pushSubView() tea.Cmd {
 		subView = NewConfigTeamsView(v.c)
 	case 1:
 		subView = NewConfigSourcesView(v.c)
+	case 3:
+		subView = NewConfigAnnotationsView(v.c)
+	case 4:
+		subView = NewConfigUsersView(v.c)
 	default:
 		return nil
 	}
