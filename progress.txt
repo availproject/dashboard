@@ -1,3 +1,18 @@
+## 2026-03-06 - US-022
+- Implemented `GET /org/overview`: loads all teams, reads sprint_parse/concerns/goal_extraction/workload ai_cache by pipeline+team, computes cross-team workload aggregate, loads org-level alignment cache, returns full org overview JSON
+- Implemented `GET /teams`: returns teams with members including notion_user_id (null until set)
+- Added `store.GetLastCompletedSyncRun(ctx, scope, teamID)` to `internal/store/sync_runs.go`
+- Added `store.GetLatestCacheByPipeline(ctx, pipeline, teamID)` to `internal/store/ai_cache.go`
+- Added migration `0009_team_members_notion` to add `notion_user_id TEXT` column to `team_members`
+- Updated `TeamMember` model and `scanMember` in `teams.go` to include `notion_user_id`
+- Files changed: `internal/api/org.go`, `internal/api/teams.go`, `internal/store/sync_runs.go`, `internal/store/ai_cache.go`, `internal/store/models.go`, `internal/store/teams.go`, `internal/store/migrations/0009_team_members_notion.{up,down}.sql`
+- **Learnings for future iterations:**
+  - `GetLatestCacheByPipeline` queries by pipeline+team_id without needing the hash — useful for read endpoints that load the most recent AI output
+  - `org.go` imports `internal/pipeline` for pipeline name constants and result structs; this is fine (no import cycle)
+  - `notion_user_id` is now in `team_members` (via migration 0009); `AddMember`/`UpdateMember` signatures unchanged — new field defaults to NULL until US-024 adds write support
+  - `workloadLabel` and `highestSeverity` helpers in `org.go` compute aggregated labels server-side
+---
+
 ## 2026-03-06 - US-021
 - Implemented `POST /sync`: validates scope ('team'/'org'), requires team_id when scope='team', checks store for existing running sync run (409 if busy), calls engine.Sync, returns {sync_run_id: N}
 - Implemented `GET /sync/{run_id}`: parses run_id from URL, fetches from store, returns SyncRun as JSON (404 if not found)
