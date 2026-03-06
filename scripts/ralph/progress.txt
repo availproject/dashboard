@@ -178,3 +178,23 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - Package name `github` conflicts with `go-github/v60/github`; alias the import as `gh`
   - go-github was `// indirect` in go.mod; first direct use requires `go get` to update go.sum with transitive deps
 ---
+
+## 2026-03-06 - US-011
+- Implemented `internal/connector/notion/notion.go`:
+  - `New(token string) *Client` wrapping `jomei/notionapi`; empty token returns Client that fails at call time
+  - `Discover(ctx, workspaceHint)` paginates `Search.Do` with empty query; maps `*notion.Page` → `notion_page` and `*notion.Database` → `notion_db` DiscoveredItems
+  - `FetchPage(ctx, pageID)` calls `Page.Get` for metadata, then `fetchBlocksText` recursively for content; returns (content, lastEditedTime, err)
+  - `FetchDatabase(ctx, dbID, updatedAfter)` queries with `TimestampFilter{Timestamp: TimestampLastEdited}`, fetches block content per page row
+  - `fetchBlocksText` recursively paginates `Block.GetChildren`, calls `blockToText` per block, recurses on `HasChildren`
+  - `blockToText` maps: Heading1/2/3 → `# text`, BulletedList/NumberedList → `- text`, Paragraph → plain text, Toggle → `> text`
+- Files changed: internal/connector/notion/notion.go
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - `notion.TimestampLastEdited` (not `TimestampLastEditedTime`) is the const in jomei/notionapi v1.13.3 (`const.go`)
+  - `notion.Date` is `type Date time.Time`; cast with `(*notion.Date)(timePtr(t))` for filter conditions
+  - `SearchResponse.Results` is `[]Object` (interface); type-switch on `*notion.Page` / `*notion.Database`
+  - Page title: iterate `page.Properties` (map[string]Property), type-assert to `*TitleProperty`
+  - Database title: `db.Title` is `[]RichText` directly (not in Properties map)
+  - `Block.GetChildren` pagination: pass `*notion.Pagination{StartCursor: cursor}` or nil for first page
+  - jomei/notionapi was already in go.mod as indirect; no `go get` needed
+---
