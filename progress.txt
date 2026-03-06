@@ -1,3 +1,13 @@
+## 2026-03-06 - US-016
+- Implemented `ConcernsResult`/`Concern` structs and `RunConcerns` in `internal/pipeline/concerns.go`: takes open_issues, merged_prs, sprint_plan_text, extracted_goals, sprint_meta + active annotations; outputs concerns with key, summary, explanation, severity
+- Implemented `WorkloadResult`/`MemberWorkload`/`WorkloadMember`/`SprintWindow` structs and `RunWorkload` in `internal/pipeline/workload.go`: takes members, sprint_window, standard_sprint_days; outputs per-member estimated_days and LOW/NORMAL/HIGH label
+- Files changed: `internal/pipeline/concerns.go`, `internal/pipeline/workload.go`
+- **Learnings for future iterations:**
+  - Both pipelines follow the same pattern: buildPrompt → inputs["prompt"] → CachedGenerator.Generate → json.Unmarshal
+  - Workload labels (LOW/NORMAL/HIGH) are determined by the AI based on thresholds described in the schema string; no Go-side label logic needed
+  - `concerns` and `workload` are valid pipeline names in ai_cache CHECK constraint
+---
+
 ## 2026-03-06 - US-015
 - Implemented shared `buildPrompt` in `internal/pipeline/shared.go`: wraps schema + inputs + optional annotations in natural language prompt with XML tags
 - Implemented `SprintParseResult` struct and `RunSprintParse` in `internal/pipeline/sprint_parse.go`: calls CachedGenerator, parses JSON output, upserts sprint_meta with planType="current"
