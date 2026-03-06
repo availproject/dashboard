@@ -134,6 +134,10 @@ func (v *TeamView) pushSubView() tea.Cmd {
 		subView = NewSprintView(v.c, v.teamID, v.name)
 	case 1:
 		subView = NewGoalsView(v.c, v.teamID, v.name)
+	case 2:
+		subView = NewWorkloadView(v.c, v.teamID, v.name)
+	case 3:
+		subView = NewVelocityView(v.c, v.teamID, v.name)
 	default:
 		return nil
 	}
