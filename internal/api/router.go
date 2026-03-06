@@ -14,6 +14,7 @@ import (
 type SyncEngine interface {
 	Sync(ctx context.Context, scope string, teamID *int64) (int64, error)
 	Discover(ctx context.Context, scope, target string) (int64, error)
+	AutoTag(ctx context.Context) error
 }
 
 // PipelineRunner is the interface the API layer uses to invoke pipelines.
@@ -79,6 +80,8 @@ func NewRouter(deps *Deps) http.Handler {
 			r.Post("/annotations", deps.handleCreateAnnotation)
 			r.Put("/annotations/{id}", deps.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", deps.handleDeleteAnnotation)
+
+			r.Get("/admin/autotag", deps.handleAdminAutotag)
 		})
 	})
 
