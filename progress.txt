@@ -1,3 +1,22 @@
+## 2026-03-06 - US-030
+- Created `internal/tui/views/org_overview.go`: OrgOverviewView loads org overview via GetOrgOverview on Init
+- Team cards show `[Team Name]  Sprint N/M  |  Risk: HIGH  |  Focus: ...` with Lip Gloss risk colors (HIGH=red, MEDIUM=yellow, LOW=green)
+- j/k navigation through team cards; Enter pushes TeamView stub
+- R triggers org sync via PostSync("org", nil), polls status, reloads data on done
+- Shows sync banner during sync; "No data yet" state when data is empty
+- Footer shows last synced timestamp or "Never synced"
+- Created `internal/tui/views/team.go`: stub TeamView (US-031 will flesh out)
+- Moved `PushViewMsg` from `internal/tui/app.go` to `internal/tui/views/org_overview.go` to break import cycle
+- Updated `internal/tui/app.go`: handles `views.PushViewMsg`; LoginDoneMsg now pushes OrgOverviewView
+- Updated `cmd/tui/main.go`: pushes OrgOverviewView when token is valid (was empty stack before)
+- Files changed: `internal/tui/views/org_overview.go`, `internal/tui/views/team.go`, `internal/tui/app.go`, `cmd/tui/main.go`
+- **Learnings for future iterations:**
+  - `PushViewMsg` lives in `internal/tui/views` (not `internal/tui`) to avoid import cycle; App handles `views.PushViewMsg`
+  - Views implement their own sync poll loop using internal msg types (orgSyncPollMsg, etc.) — no shared poller needed
+  - Lip Gloss color codes: 9=red, 11=yellow, 10=green, 8=dim gray, 12=bright blue
+  - `NewTeamView(c, teamID, name)` is the stub for US-031; update it in place in team.go
+---
+
 ## 2026-03-06 - US-029
 - Created `internal/tui/views/login.go`: LoginView with two textinput.Model fields (username + password) using `github.com/charmbracelet/bubbles/textinput`
 - Submit on Enter: calls client.Login; on success emits LoginDoneMsg; on failure displays error below the form
@@ -181,6 +200,7 @@
 - `go build ./...` and `go vet ./...` are the quality checks
 - `charmbracelet/bubbles v1.0.0` is in go.mod; use `textinput.New()` for TUI text input fields
 - TUI views live in `internal/tui/views/`; they import `internal/tui/client` but NOT `internal/tui` (avoids import cycle)
+- `PushViewMsg` is defined in `internal/tui/views` (not `tui`); App handles `views.PushViewMsg` to push new views
 - Pipeline prompt pattern: `buildPrompt(schema, rawInputs, annotations)` → put in `inputs["prompt"]` → call `CachedGenerator.Generate(ctx, pipelineName, &teamID, inputs, nil)`
 - sync_runs status CHECK is `('running', 'done', 'error')` — use 'done'/'error', NOT 'completed'/'failed'
 - Always use `IF NOT EXISTS` for migrations
