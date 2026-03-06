@@ -58,6 +58,16 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	return err
 }
 
+// CountUsersByRole returns the number of users with the given role.
+func (s *Store) CountUsersByRole(ctx context.Context, role string) (int, error) {
+	const q = `SELECT COUNT(*) FROM users WHERE role = ?`
+	var n int
+	if err := s.db.QueryRowContext(ctx, q, role).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count users by role: %w", err)
+	}
+	return n, nil
+}
+
 // ListUsers returns all users ordered by id.
 func (s *Store) ListUsers(ctx context.Context) ([]*User, error) {
 	const q = `SELECT id, username, password_hash, role, created_at FROM users ORDER BY id`
