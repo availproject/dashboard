@@ -8,11 +8,6 @@ import (
 	"github.com/your-org/dashboard/internal/tui/views"
 )
 
-// PushViewMsg is sent by any view to push a new view onto the stack.
-type PushViewMsg struct {
-	View tea.Model
-}
-
 // ShowLoginMsg is sent when an API call fails with ErrUnauthenticated.
 // The App will push a new LoginView on top of the current stack.
 type ShowLoginMsg struct{}
@@ -109,16 +104,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case PushViewMsg:
+	case views.PushViewMsg:
 		a.views = append(a.views, m.View)
 		return a, m.View.Init()
 
 	case views.LoginDoneMsg:
-		// Pop the login view; if the stack is now empty push a placeholder.
-		if len(a.views) > 1 {
+		// Pop the login view, then push the org overview.
+		if len(a.views) > 0 {
 			a.views = a.views[:len(a.views)-1]
 		}
-		return a, nil
+		ov := views.NewOrgOverviewView(a.client)
+		a.views = append(a.views, ov)
+		return a, ov.Init()
 
 	case ShowLoginMsg:
 		lv := views.NewLoginView(a.client)
