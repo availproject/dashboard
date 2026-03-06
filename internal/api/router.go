@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,7 +11,10 @@ import (
 )
 
 // SyncEngine is the interface the API layer uses to trigger syncs.
-type SyncEngine interface{}
+type SyncEngine interface {
+	Sync(ctx context.Context, scope string, teamID *int64) (int64, error)
+	Discover(ctx context.Context, scope, target string) (int64, error)
+}
 
 // PipelineRunner is the interface the API layer uses to invoke pipelines.
 type PipelineRunner interface{}
