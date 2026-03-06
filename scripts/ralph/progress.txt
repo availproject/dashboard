@@ -75,3 +75,16 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - `scanMember` helper takes `*sql.Rows` (not `*sql.Row`) since fetching by ID uses QueryContext + rows.Next()
   - No testify in go.mod; use standard `testing` package with `t.Fatal`/`t.Error`
 ---
+
+## 2026-03-06 - US-005
+- Implemented `internal/store/catalogue.go`: UpsertCatalogueItem (INSERT ... ON CONFLICT DO UPDATE), ListCatalogue, GetCatalogueItem, UpdateCatalogueStatus, UpdateCatalogueAISuggestion
+- Implemented `internal/store/source_configs.go`: UpsertSourceConfig, ListSourceConfigs, DeleteSourceConfig, GetSourceConfigsForScope
+- Added catalogue and source config CRUD tests to `internal/store/store_test.go`
+- Files changed: internal/store/catalogue.go, internal/store/source_configs.go, internal/store/store_test.go
+- `go build ./...`, `go vet ./...`, and `go test ./internal/store/...` all pass
+- **Learnings for future iterations:**
+  - SQLite ON CONFLICT DO UPDATE (upsert) does not return LastInsertId reliably; after upsert, re-fetch by unique key to get the record
+  - NULL team_id in UNIQUE(catalogue_id, team_id, purpose) makes ON CONFLICT DO UPDATE ineffective for org-level configs; use SELECT-then-INSERT pattern instead
+  - GetSourceConfigsForScope uses conditional SQL: `WHERE team_id = ?` vs `WHERE team_id IS NULL` depending on NullInt64.Valid
+  - scanCatalogue/scanSourceConfig use *sql.Rows (not *sql.Row) for consistency with getMemberByID pattern
+---
