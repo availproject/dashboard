@@ -20,6 +20,11 @@
 - **Bootstrap pattern**: `Bootstrap(st *store.Store, cfg *config.Config)` calls `st.ListUsers`, inserts admin only when empty; stores password hash directly (no re-hash)
 - **Middleware context keys**: use unexported `contextKey` string type with constants `contextKeyUsername`/`contextKeyRole` to avoid collisions
 - **RequireRole logic**: 'edit' satisfies any role; 'view' satisfies only 'view'; empty/unknown role denied always
+- **go-github auth**: `gh.NewClient(nil).WithAuthToken(token)` — no oauth2 needed; alias import as `gh` since package name conflicts with our `github` package
+- **go-github GetContent()**: `RepositoryContent.GetContent()` returns `(string, error)` and handles base64 decode automatically
+- **git tree resolution**: `GetTree` needs real SHA; use `GetBranch → .GetCommit().GetCommit().GetTree().GetSHA()`
+- **GraphQL pagination**: cursor type is `*string` (nil for first page); set to `&endCursor` for next pages
+- **connector package**: shared `DiscoveredItem` + `Discoverer` interface live in `internal/connector/connector.go`
 ---
 
 # Ralph Progress Log
@@ -148,4 +153,28 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - `http.MaxBytesReader` requires a ResponseWriter; use `io.LimitReader` instead when only the request is available
   - chi router: group mutations under nested `r.Group` with `RequireRole('edit')` middleware inside the `RequireAuth` group
   - hash-password subcommand must check `os.Args[1]` before `flag.Parse()` to avoid flag parsing errors
+---
+
+## 2026-03-06 - US-010
+- Created `internal/connector/connector.go`: DiscoveredItem struct + Discoverer interface
+- Implemented `internal/connector/github/github.go`: Client wrapping go-github v60 with token transport
+  - New(token) returns *Client; empty token deferred to runtime (methods return "GITHUB_TOKEN missing" error)
+  - Discover(ctx, target): enumerates labels (paginated REST), ProjectsV2 (GraphQL), .md files (git tree API)
+  - FetchIssues: search API with q=repo:owner/repo+label:label+updated:>date
+  - FetchDraftIssues: GraphQL ProjectV2Items filtered by type=DRAFT_ISSUE and Team/Area field value
+  - FetchMergedPRs: list closed PRs, filter client-side by merged_at > since
+  - FetchCommits: ListCommits with since/until, filter client-side by author login set
+  - FetchMarkdownFile: GetContents + go-github's GetContent() for automatic base64 decode
+  - AutoTagIssues: GraphQL page all project items; apply label via REST when Team/Area set but label missing
+  - graphql() helper: plain net/http POST to https://api.github.com/graphql with Bearer token
+- Added `github.com/google/go-github/v60` as direct dep (was indirect); go get resolved go-querystring transitive dep
+- Files changed: internal/connector/connector.go, internal/connector/github/github.go, go.mod, go.sum
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - go-github v60: `gh.NewClient(nil).WithAuthToken(token)` is the idiomatic token auth pattern (no oauth2 needed)
+  - go-github `RepositoryContent.GetContent()` returns `(string, error)` and handles base64 decode automatically
+  - go-github `GetTree` with `recursive=true` needs a real tree SHA (not "HEAD"); resolve via `GetBranch` → commit → tree SHA
+  - GraphQL pagination: use `cursor *string` (nil for first page), set to `&endCursor` for subsequent pages
+  - Package name `github` conflicts with `go-github/v60/github`; alias the import as `gh`
+  - go-github was `// indirect` in go.mod; first direct use requires `go get` to update go.sum with transitive deps
 ---
