@@ -42,17 +42,37 @@ func (c *Client) checkToken() error {
 // Discover searches the Notion workspace and returns one DiscoveredItem per
 // page (notion_page) and database (notion_db). The workspaceHint parameter is
 // unused but satisfies the Discoverer interface.
+//
+// Two separate searches are issued (one for pages, one for databases) because
+// the jomei/notionapi library serialises an empty Filter as {"property":""},
+// which the Notion API rejects. Explicit filters avoid that.
 func (c *Client) Discover(ctx context.Context, workspaceHint string) ([]connector.DiscoveredItem, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
 	}
 
+	pages, err := c.searchByType(ctx, "page")
+	if err != nil {
+		return nil, err
+	}
+	dbs, err := c.searchByType(ctx, "database")
+	if err != nil {
+		return nil, err
+	}
+	return append(pages, dbs...), nil
+}
+
+func (c *Client) searchByType(ctx context.Context, objectType string) ([]connector.DiscoveredItem, error) {
 	var items []connector.DiscoveredItem
 	var cursor notion.Cursor
 
 	for {
 		req := &notion.SearchRequest{
 			PageSize: 100,
+			Filter: notion.SearchFilter{
+				Property: "object",
+				Value:    objectType,
+			},
 		}
 		if cursor != "" {
 			req.StartCursor = cursor
@@ -60,25 +80,23 @@ func (c *Client) Discover(ctx context.Context, workspaceHint string) ([]connecto
 
 		resp, err := c.nc.Search.Do(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("notion: search failed: %w", err)
+			return nil, fmt.Errorf("notion: search %s failed: %w", objectType, err)
 		}
 
 		for _, obj := range resp.Results {
 			switch v := obj.(type) {
 			case *notion.Page:
-				title := extractPageTitle(v)
 				items = append(items, connector.DiscoveredItem{
 					SourceType: "notion_page",
 					ExternalID: v.ID.String(),
-					Title:      title,
+					Title:      extractPageTitle(v),
 					URL:        v.URL,
 				})
 			case *notion.Database:
-				title := extractDatabaseTitle(v)
 				items = append(items, connector.DiscoveredItem{
 					SourceType: "notion_db",
 					ExternalID: v.ID.String(),
-					Title:      title,
+					Title:      extractDatabaseTitle(v),
 					URL:        v.URL,
 				})
 			}
