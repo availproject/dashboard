@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,9 +23,10 @@ type teamsForSourcesLoadedMsg struct {
 	err   error
 }
 
-type sourcesDiscoverStartedMsg struct {
-	runID int64
-	err   error
+// discoverCompletedMsg is sent by the discover view when a discovery run
+// finishes, so the sources list can auto-reload and display the outcome.
+type discoverCompletedMsg struct {
+	errMsg string // empty on success
 }
 
 // ---- status filter ----
@@ -104,13 +106,15 @@ func (v *ConfigSourcesView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, nil
 
-	case sourcesDiscoverStartedMsg:
-		if m.err != nil {
-			v.discoverMsg = "Discover error: " + m.err.Error()
+	case discoverCompletedMsg:
+		if m.errMsg != "" {
+			v.discoverMsg = "Discovery failed: " + m.errMsg
 		} else {
-			v.discoverMsg = fmt.Sprintf("Discover started (run #%d). Reload to see new items.", m.runID)
+			v.discoverMsg = "Discovery complete."
 		}
-		return v, nil
+		v.loading = true
+		v.cursor = 0
+		return v, v.loadItems()
 
 	case tea.KeyMsg:
 		switch m.String() {
@@ -330,15 +334,24 @@ func (v *configTagView) View() string {
 
 // ---- ConfigDiscoverView: discovery prompt ----
 
-type discoverDoneMsg struct {
+// discoverSubmittedMsg is returned when the POST to start discovery succeeds.
+type discoverSubmittedMsg struct {
 	runID int64
 	err   error
+}
+
+// discoverPollMsg triggers the next poll tick.
+type discoverPollMsg struct{ runID int64 }
+
+// discoverFinishedMsg is returned when the sync run reaches a terminal state.
+type discoverFinishedMsg struct {
+	errMsg string // empty on success
 }
 
 var discoverScopes = []string{"notion_workspace", "github_repo", "metrics_url"}
 
 var discoverScopeHelp = map[string]string{
-	"notion_workspace": "target: leave blank (enumerates all pages the integration can access)",
+	"notion_workspace": "target: leave blank — enumerates all pages the integration can access",
 	"github_repo":      "target: owner/repo  (e.g. acme/backend)",
 	"metrics_url":      "target: dashboard URL  (Grafana, PostHog, or SigNoz)",
 }
@@ -353,9 +366,9 @@ type configDiscoverView struct {
 	c        *client.Client
 	target   textinput.Model
 	scopeIdx int
-	running  bool
+	running  bool  // POST in flight
+	polling  bool  // run is in progress on server
 	runID    int64
-	started  bool
 	errMsg   string
 }
 
@@ -373,44 +386,83 @@ func (v *configDiscoverView) Init() tea.Cmd {
 
 func (v *configDiscoverView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
-	case discoverDoneMsg:
+	case discoverSubmittedMsg:
 		v.running = false
 		if m.err != nil {
 			v.errMsg = m.err.Error()
-		} else {
-			v.started = true
-			v.runID = m.runID
+			return v, nil
 		}
-		return v, nil
+		v.polling = true
+		v.runID = m.runID
+		return v, v.poll(m.runID)
+
+	case discoverPollMsg:
+		return v, v.poll(m.runID)
+
+	case discoverFinishedMsg:
+		v.polling = false
+		// Pop this view and notify the sources list to reload.
+		return v, tea.Batch(
+			func() tea.Msg { return msgs.PopViewMsg{} },
+			func() tea.Msg { return discoverCompletedMsg{errMsg: m.errMsg} },
+		)
 
 	case tea.KeyMsg:
-		switch m.String() {
-		case "esc":
+		if m.String() == "esc" && !v.polling {
 			return v, func() tea.Msg { return msgs.PopViewMsg{} }
-		case "tab":
-			v.scopeIdx = (v.scopeIdx + 1) % len(discoverScopes)
-			v.target.Placeholder = discoverScopePlaceholder[discoverScopes[v.scopeIdx]]
-			v.target.SetValue("")
-			return v, nil
-		case "enter":
-			if !v.running {
+		}
+		if !v.running && !v.polling {
+			switch m.String() {
+			case "tab":
+				v.scopeIdx = (v.scopeIdx + 1) % len(discoverScopes)
+				v.target.Placeholder = discoverScopePlaceholder[discoverScopes[v.scopeIdx]]
+				v.target.SetValue("")
+				return v, nil
+			case "enter":
 				v.running = true
-				return v, v.runDiscover()
+				v.errMsg = ""
+				return v, v.submit()
 			}
 		}
 	}
-	var cmd tea.Cmd
-	v.target, cmd = v.target.Update(msg)
-	return v, cmd
+	if !v.running && !v.polling {
+		var cmd tea.Cmd
+		v.target, cmd = v.target.Update(msg)
+		return v, cmd
+	}
+	return v, nil
 }
 
-func (v *configDiscoverView) runDiscover() tea.Cmd {
+func (v *configDiscoverView) submit() tea.Cmd {
 	c := v.c
 	scope := discoverScopes[v.scopeIdx]
 	target := strings.TrimSpace(v.target.Value())
 	return func() tea.Msg {
 		runID, err := c.PostDiscover(scope, target)
-		return discoverDoneMsg{runID: runID, err: err}
+		return discoverSubmittedMsg{runID: runID, err: err}
+	}
+}
+
+func (v *configDiscoverView) poll(runID int64) tea.Cmd {
+	c := v.c
+	return func() tea.Msg {
+		time.Sleep(2 * time.Second)
+		run, err := c.GetSyncRun(runID)
+		if err != nil {
+			return discoverFinishedMsg{errMsg: err.Error()}
+		}
+		switch run.Status {
+		case "completed", "done":
+			return discoverFinishedMsg{}
+		case "failed", "error":
+			errMsg := "discovery failed"
+			if run.Error != nil {
+				errMsg = *run.Error
+			}
+			return discoverFinishedMsg{errMsg: errMsg}
+		default:
+			return discoverPollMsg{runID: runID}
+		}
 	}
 }
 
@@ -419,10 +471,14 @@ func (v *configDiscoverView) View() string {
 	var sb strings.Builder
 	sb.WriteString("\n  " + cfgSelectedStyle.Render("Discover Sources") + "\n\n")
 
-	if v.started {
-		sb.WriteString(fmt.Sprintf("  Discovery started (run #%d).\n", v.runID))
-		sb.WriteString("  New items will appear in the catalogue once complete.\n\n")
-		sb.WriteString(cfgDimStyle.Render("  Press Esc to return to the sources list, then r to reload.") + "\n")
+	if v.polling {
+		sb.WriteString(fmt.Sprintf("  Discovering… (run #%d)\n", v.runID))
+		sb.WriteString(cfgDimStyle.Render("  This may take a moment. Please wait.") + "\n")
+		return sb.String()
+	}
+
+	if v.running {
+		sb.WriteString("  Starting discovery…\n")
 		return sb.String()
 	}
 
@@ -431,9 +487,6 @@ func (v *configDiscoverView) View() string {
 	sb.WriteString("  Target: " + v.target.View() + "\n")
 	if v.errMsg != "" {
 		sb.WriteString("\n  Error: " + v.errMsg + "\n")
-	}
-	if v.running {
-		sb.WriteString("\n  Submitting…\n")
 	}
 	sb.WriteString("\n" + cfgDimStyle.Render("  Enter to start  ·  Tab cycle source type  ·  Esc to cancel") + "\n")
 	return sb.String()
