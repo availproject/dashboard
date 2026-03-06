@@ -1,3 +1,29 @@
+## 2026-03-06 - US-027
+- All rollover logic was already implemented in US-025 (config_sources.go, store/annotations.go, pipeline/runner.go)
+- Added explicit `TestRolloverAnnotations` unit test to `internal/store/store_test.go`
+- Test creates team, creates item-tier and team-tier annotations, calls `ArchiveItemAnnotationsForPlan`, then explicitly verifies each annotation's archived state
+- Pipeline filtering already confirmed: `Runner.activeAnnotations()` in `runner.go` filters `Archived == 0` Go-side after `ListAnnotations` query
+- Files changed: `internal/store/store_test.go`
+- **Learnings for future iterations:**
+  - US-025 already implemented the full rollover flow; US-027 just needed an explicit targeted unit test
+  - `ListAnnotations` does NOT filter by archived=0 in SQL — it returns all; Go-side filter in `activeAnnotations` compensates for pipeline inputs
+  - `TestAnnotationCRUD` implicitly tests rollover but `TestRolloverAnnotations` makes it explicit with per-annotation ID verification
+---
+
+## 2026-03-06 - US-026
+- Implemented `GET /config/users`: returns list of users (without password_hash)
+- Implemented `POST /config/users`: accepts {username, password, role}, bcrypt-hashes password, stores user
+- Implemented `PUT /config/users/{id}`: accepts {role, password}; both optional; fetches existing user to preserve current values if fields omitted
+- Implemented `DELETE /config/users/{id}`: checks target user's role; returns 409 if deleting the last edit-role user via `CountUsersByRole`
+- Added `CountUsersByRole(ctx, role) (int, error)` to `internal/store/users.go`
+- `/annotations` POST/PUT/DELETE already delegated to shared helpers in `annotations.go` (done in US-025)
+- Files changed: `internal/api/config_users.go`, `internal/store/users.go`
+- **Learnings for future iterations:**
+  - `auth.HashPassword` and `auth.CheckPassword` are in `internal/auth/password.go` — use these instead of calling bcrypt directly
+  - `UpdateUser` takes both `passwordHash` and `role`; if only one changes, fetch existing user first to preserve the other
+  - DELETE /config/users/{id} returns 409 (not 403) when trying to remove the last edit-role user
+---
+
 ## 2026-03-06 - US-025
 - Implemented `GET /config/sources`: lists all catalogue items with their source configs, grouped by catalogue_id; includes ai_suggested_purpose from ai_suggestion field
 - Implemented `PUT /config/sources/{id}`: updates catalogue status and upserts source_config; handles current_plan rollover (archive item annotations + delete old config before inserting new)
