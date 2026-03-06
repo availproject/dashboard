@@ -6,7 +6,10 @@
 - `go vet ./...` is the typecheck command for this project
 - `go build ./...` for full build verification
 - Migration files use 4-digit prefix format: `0001_name.up.sql` / `0001_name.down.sql`
-- Migrations embedded via `//go:embed migrations` in `internal/store/embed.go`; variable `migrationsFS embed.FS` used by US-003 store infrastructure
+- Migrations embedded via `//go:embed migrations` in `internal/store/embed.go`; variable `migrationsFS embed.FS`
+- golang-migrate wired with `database/sqlite` (modernc.org/sqlite, pure Go) + `source/iofs`; driver name is `"sqlite"` (sql.Open)
+- nullable DB columns → `sql.NullString`, `sql.NullInt64`, `sql.NullTime` in model structs
+- `Store.db` is unexported `*sql.DB`; use `store.New(path)` to open + migrate in one step
 ---
 
 # Ralph Progress Log
@@ -40,4 +43,17 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - `migrationsFS` is exported from `internal/store/embed.go`; US-003 should use it with `iofs.New(migrationsFS, "migrations")` to wire into golang-migrate
   - Down migrations drop tables in reverse order of creation to respect FK constraints
   - `team_id` in ai_cache, annotations, source_configs, sync_runs is nullable (no NOT NULL) to allow org-level records
+---
+
+## 2026-03-06 - US-003
+- Implemented `internal/store/store.go`: Store struct wrapping *sql.DB, New(path) opens DB + WAL + FK + migrations, Migrate(db) runner, Close()
+- Implemented `internal/store/models.go`: User, Team, TeamMember, SourceCatalogue, SourceConfig, Annotation, AICache, SyncRun, SprintMeta, RefreshToken
+- Added `github.com/golang-migrate/migrate/v4/database/sqlite` and `source/iofs` to go.mod via `go get`
+- Files changed: internal/store/store.go, internal/store/models.go, go.mod, go.sum
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - `golang-migrate/v4/database/sqlite` (not sqlite3) is the pure-Go driver for modernc.org/sqlite; use `sqlite.WithInstance(db, &sqlite.Config{})` to get the driver
+  - Migration source: `iofs.New(migrationsFS, "migrations")` where migrationsFS is the embed.FS from embed.go
+  - `migrate.NewWithInstance("iofs", src, "sqlite", driver)` then `.Up()` ignoring `migrate.ErrNoChange`
+  - nullable SQL columns: use `sql.NullString`/`sql.NullInt64`/`sql.NullTime` in model structs
 ---
