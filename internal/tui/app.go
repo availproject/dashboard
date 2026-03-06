@@ -108,6 +108,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.views = append(a.views, m.View)
 		return a, m.View.Init()
 
+	case views.PopViewMsg:
+		if len(a.views) > 1 {
+			a.views = a.views[:len(a.views)-1]
+		}
+		return a, nil
+
 	case views.LoginDoneMsg:
 		// Pop the login view, then push the org overview.
 		if len(a.views) > 0 {
