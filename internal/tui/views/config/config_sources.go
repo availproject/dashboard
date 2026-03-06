@@ -354,6 +354,8 @@ type configDiscoverView struct {
 	target   textinput.Model
 	scopeIdx int
 	running  bool
+	runID    int64
+	started  bool
 	errMsg   string
 }
 
@@ -376,7 +378,8 @@ func (v *configDiscoverView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.err != nil {
 			v.errMsg = m.err.Error()
 		} else {
-			return v, func() tea.Msg { return msgs.PopViewMsg{} }
+			v.started = true
+			v.runID = m.runID
 		}
 		return v, nil
 
@@ -415,6 +418,14 @@ func (v *configDiscoverView) View() string {
 	scope := discoverScopes[v.scopeIdx]
 	var sb strings.Builder
 	sb.WriteString("\n  " + cfgSelectedStyle.Render("Discover Sources") + "\n\n")
+
+	if v.started {
+		sb.WriteString(fmt.Sprintf("  Discovery started (run #%d).\n", v.runID))
+		sb.WriteString("  New items will appear in the catalogue once complete.\n\n")
+		sb.WriteString(cfgDimStyle.Render("  Press Esc to return to the sources list, then r to reload.") + "\n")
+		return sb.String()
+	}
+
 	sb.WriteString("  Source type: " + cfgSelectedStyle.Render(scope) + "  " + cfgDimStyle.Render("(Tab to cycle)") + "\n")
 	sb.WriteString("  " + cfgDimStyle.Render(discoverScopeHelp[scope]) + "\n\n")
 	sb.WriteString("  Target: " + v.target.View() + "\n")
@@ -422,7 +433,7 @@ func (v *configDiscoverView) View() string {
 		sb.WriteString("\n  Error: " + v.errMsg + "\n")
 	}
 	if v.running {
-		sb.WriteString("\n  Running discovery…\n")
+		sb.WriteString("\n  Submitting…\n")
 	}
 	sb.WriteString("\n" + cfgDimStyle.Render("  Enter to start  ·  Tab cycle source type  ·  Esc to cancel") + "\n")
 	return sb.String()
