@@ -1,0 +1,16 @@
+server:
+  port: 8080
+
+storage:
+  path: ./dashboard.db
+
+auth:
+  jwt_secret: changeme
+  admin_username: admin
+  admin_password_hash: ""
+
+ai:
+  provider: anthropic
+  model: claude-opus-4-6
+  api_key: ""
+  binary_path: claude

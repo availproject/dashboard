@@ -1,0 +1,707 @@
+{
+  "project": "Product Status Dashboard",
+  "branchName": "ralph/product-status-dashboard",
+  "description": "TUI-first, AI-assisted product status dashboard for a startup head of product. Go backend (dashboard-server) + Bubble Tea TUI client (dashboard-tui). Manages ~4 teams, 25-50 people with real-time view of sprint status, workload, velocity, and business metrics.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Project Scaffolding",
+      "description": "As an AI coding agent, I need a runnable Go repo with config loading, .env loading, and placeholder server and TUI binaries so that subsequent phases have a clean foundation to build on.",
+      "acceptanceCriteria": [
+        "go mod init github.com/your-org/dashboard executed; go.mod present",
+        "Directory tree created: cmd/server/main.go, cmd/tui/main.go, internal/api/, internal/auth/, internal/config/, internal/connector/github/, internal/connector/notion/, internal/connector/grafana/, internal/connector/posthog/, internal/connector/signoz/, internal/ai/, internal/pipeline/, internal/store/, internal/sync/, internal/tui/",
+        "internal/config/config.go defines Config, ServerConfig, StorageConfig, AuthConfig, AIConfig structs; Load(path string) (*Config, error) uses gopkg.in/yaml.v3",
+        "config.example.yaml present with all fields: server.port, storage.path, auth.jwt_secret, auth.admin_username, auth.admin_password_hash, ai.provider, ai.model, ai.api_key, ai.binary_path",
+        "internal/config/env.go: reads .env via os.ReadFile + manual key=value parse (no third-party library); exposes GitHubToken(), NotionToken(), GrafanaToken(), GrafanaBaseURL(), PostHogAPIKey(), PostHogHost(), SignozAPIKey(), SignozBaseURL()",
+        "cmd/server/main.go: parses --config flag (default ./config.yaml), loads config + .env, prints masked config summary, exits cleanly",
+        "cmd/tui/main.go: parses --server flag (default http://localhost:8080), prints server address, exits cleanly",
+        "All dependencies added: github.com/go-chi/chi/v5, github.com/charmbracelet/bubbletea, github.com/charmbracelet/lipgloss, modernc.org/sqlite, github.com/golang-migrate/migrate/v4, github.com/golang-jwt/jwt/v5, golang.org/x/crypto, gopkg.in/yaml.v3, github.com/google/go-github/v60, github.com/jomei/notionapi",
+        "go build ./... succeeds with no errors",
+        "Both binaries run and exit cleanly (exit code 0)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Database Migrations (0001–0008)",
+      "description": "As an AI coding agent, I need all SQLite migration files with up/down SQL so that the database schema is fully defined and versioned.",
+      "acceptanceCriteria": [
+        "Migration files in internal/store/migrations/ numbered 0001–0008, each with .up.sql and .down.sql, embedded via //go:embed",
+        "0001_users.up.sql: users table with id, username (UNIQUE), password_hash, role CHECK(role IN ('view','edit')), created_at",
+        "0002_teams.up.sql: teams table and team_members table with foreign key to teams ON DELETE CASCADE",
+        "0003_source_catalogue.up.sql: source_catalogue table with UNIQUE(source_type, external_id); valid source_type values: github_repo, notion_page, notion_db, grafana_panel, posthog_panel, signoz_panel; valid status values: untagged, configured, ignored",
+        "0004_source_configs.up.sql: source_configs table with UNIQUE(catalogue_id, team_id, purpose); valid purpose values: current_plan, next_plan, goals, metrics_panel, org_goals, org_milestones",
+        "0005_annotations.up.sql: annotations table with tier CHECK(tier IN ('item','team')), archived INTEGER NOT NULL DEFAULT 0",
+        "0006_ai_cache.up.sql: ai_cache table with UNIQUE(input_hash, pipeline, team_id); valid pipeline values: sprint_parse, concerns, goal_extraction, workload, velocity, alignment, discovery_suggestion",
+        "0007_sync_runs_sprint_meta.up.sql: sync_runs table with scope CHECK and status CHECK; sprint_meta table with UNIQUE(team_id, plan_type) and plan_type CHECK(plan_type IN ('current','next'))",
+        "0008_refresh_tokens.up.sql: refresh_tokens table with token_hash UNIQUE, expires_at",
+        "All .down.sql files drop the corresponding tables in reverse order",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Store Infrastructure and Models",
+      "description": "As an AI coding agent, I need the Store struct, migration runner, and Go model structs so that all database access has a typed foundation.",
+      "acceptanceCriteria": [
+        "internal/store/store.go: Store wraps *sql.DB; New(path string) (*Store, error) opens DB, enables WAL mode (PRAGMA journal_mode=WAL), enables foreign keys (PRAGMA foreign_keys=ON), runs migrations via golang-migrate wired with modernc.org/sqlite driver",
+        "store.Migrate(db *sql.DB) error applies all pending migrations on startup",
+        "internal/store/models.go: one Go struct per table with field names matching column names exactly (User, Team, TeamMember, SourceCatalogue, SourceConfig, Annotation, AICache, SyncRun, SprintMeta, RefreshToken)",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Store Query Methods: Users and Teams",
+      "description": "As an AI coding agent, I need typed query methods for users and teams so that auth and team management have a data layer.",
+      "acceptanceCriteria": [
+        "internal/store/users.go on *Store: CreateUser, GetUserByUsername, GetUserByID, UpdateUser, DeleteUser, ListUsers",
+        "internal/store/teams.go on *Store: CreateTeam, UpdateTeam, DeleteTeam, ListTeams, AddMember, UpdateMember, DeleteMember, GetTeamMembers",
+        "go test ./internal/store/... passes with in-memory SQLite (:memory:), covering basic CRUD round-trips for users and teams",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Store Query Methods: Catalogue and Source Configs",
+      "description": "As an AI coding agent, I need typed query methods for the source catalogue and source configs so that source discovery and configuration have a data layer.",
+      "acceptanceCriteria": [
+        "internal/store/catalogue.go on *Store: UpsertCatalogueItem, ListCatalogue, GetCatalogueItem, UpdateCatalogueStatus, UpdateCatalogueAISuggestion",
+        "internal/store/source_configs.go on *Store: UpsertSourceConfig, ListSourceConfigs, DeleteSourceConfig, GetSourceConfigsForScope",
+        "go test ./internal/store/... passes covering CRUD round-trips for source_catalogue and source_configs",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Store Query Methods: Annotations, AI Cache, Sync, Sprint Meta, Refresh Tokens",
+      "description": "As an AI coding agent, I need typed query methods for annotations, AI cache, sync runs, sprint meta, and refresh tokens so that the full data layer is complete.",
+      "acceptanceCriteria": [
+        "internal/store/annotations.go on *Store: CreateAnnotation, UpdateAnnotation, DeleteAnnotation, ListAnnotations, ArchiveItemAnnotationsForPlan (UPDATE annotations SET archived=1 WHERE team_id=? AND tier='item' AND archived=0)",
+        "internal/store/ai_cache.go on *Store: GetCacheEntry, SetCacheEntry, PruneStaleCache(olderThan time.Duration)",
+        "internal/store/sync_runs.go on *Store: CreateSyncRun, UpdateSyncRun, GetSyncRun",
+        "internal/store/sprint_meta.go on *Store: UpsertSprintMeta, GetSprintMeta",
+        "internal/store/refresh_tokens.go on *Store: CreateRefreshToken, GetRefreshTokenByHash, DeleteRefreshToken, DeleteExpiredRefreshTokens",
+        "go test ./internal/store/... passes covering CRUD round-trips for all five table groups",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Auth Utilities: Password Hashing and JWT",
+      "description": "As an AI coding agent, I need bcrypt password utilities and JWT issuance/validation so that the auth system has a cryptographic foundation.",
+      "acceptanceCriteria": [
+        "internal/auth/password.go: HashPassword(plain string) (string, error) with bcrypt cost 12; CheckPassword(hash, plain string) bool",
+        "internal/auth/jwt.go: Claims struct with Sub, Role, exp; IssueToken(username, role, secret string) (string, error) with 1-hour expiry; IssueRefreshToken() (rawToken string, hash string, err error) with random 32 bytes returning raw token + SHA-256 hex hash; ValidateToken(tokenStr, secret string) (*Claims, error)",
+        "Unit tests: JWT issue + validate round-trip passes; expired token rejected; password hash + check works; two IssueRefreshToken calls produce different raw tokens and hashes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Auth Middleware and Bootstrap",
+      "description": "As an AI coding agent, I need JWT middleware for route protection and an admin bootstrap function so that the server can enforce authentication and seed the first user.",
+      "acceptanceCriteria": [
+        "internal/auth/bootstrap.go: Bootstrap(store *store.Store, cfg *config.Config) error; if users table is empty, insert admin with username=cfg.Auth.AdminUsername, password_hash=cfg.Auth.AdminPasswordHash (store directly, do not re-hash), role='edit'",
+        "internal/api/middleware.go: RequireAuth(secret string) func(http.Handler) http.Handler validates Authorization: Bearer <token>, sets username and role in request context using typed context key, returns 401 on invalid/missing token",
+        "RequireRole(role string) func(http.Handler) http.Handler checks context role, returns 403 if insufficient; 'edit' required for mutations, 'view' sufficient for reads",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "API Skeleton and Auth Endpoints",
+      "description": "As an AI coding agent, I need an HTTP server with chi router, working auth endpoints, and all other routes returning 501 so that the API surface is established and auth can be tested end-to-end.",
+      "acceptanceCriteria": [
+        "internal/api/router.go: NewRouter(deps *Deps) http.Handler; Deps struct carries Store *store.Store, Config *config.Config, Engine SyncEngine (interface), Pipeline PipelineRunner (interface); public routes: POST /auth/login, POST /auth/refresh; all other routes under RequireAuth; mutation routes additionally under RequireRole('edit')",
+        "internal/api/response.go: writeJSON, writeError (writes {\"error\": \"message\"}), readJSON with 1MB size limit",
+        "internal/api/auth.go: POST /auth/login reads {username, password}, checks password, issues access + refresh tokens, stores refresh token hash in DB, returns {token, refresh_token}, 401 on bad credentials",
+        "POST /auth/refresh reads {refresh_token}, hashes it, validates expiry, issues new access token, rotates refresh token, returns {token, refresh_token}, 401 on invalid/expired",
+        "Stub handler files each returning writeError(w, 501, 'not implemented'): api/org.go (GET /org/overview), api/teams.go (GET /teams, GET /teams/{id}/sprint, GET /teams/{id}/goals, GET /teams/{id}/workload, GET /teams/{id}/velocity, GET /teams/{id}/metrics), api/config_teams.go, api/config_sources.go, api/config_annotations.go, api/config_users.go, api/sync.go, api/annotations.go with all routes listed in the PRD",
+        "cmd/server/main.go updated: opens store, runs migrations, runs bootstrap, wires Deps, starts HTTP server on configured port",
+        "cmd/server/main.go supports hash-password subcommand: checks os.Args[1] == 'hash-password' before normal startup, reads password from stdin, prints bcrypt hash (cost 12) to stdout, exits",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "GitHub Source Connector",
+      "description": "As an AI coding agent, I need the shared Discoverer interface and the GitHub connector with all fetch methods so that GitHub repos can be discovered and queried.",
+      "acceptanceCriteria": [
+        "internal/connector/connector.go: DiscoveredItem struct with SourceType, ExternalID, Title, URL, SourceMeta map[string]any, Excerpt string; Discoverer interface with Discover(ctx, target string) ([]DiscoveredItem, error)",
+        "internal/connector/github/: New(token string) *Client using google/go-github with token-authenticated transport; GraphQL client as plain net/http with Authorization: Bearer hitting https://api.github.com/graphql",
+        "Discover(ctx, target) enumerates labels, GitHub Projects (GraphQL ProjectV2), .md files (tree API filtered to .md); returns one DiscoveredItem per label, project, and .md file",
+        "FetchIssues(ctx, owner, repo, label string, since time.Time) ([]*github.Issue, error) using search API q=repo:{owner}/{repo}+label:{label}+updated:>{since}",
+        "FetchDraftIssues(ctx, owner, repo, projectID, teamAreaValue string) ([]DraftIssue, error) via GraphQL ProjectV2Items filtered by Team/Area field and contentType: DraftIssue",
+        "FetchMergedPRs(ctx, owner, repo string, since time.Time) ([]*github.PullRequest, error) listing closed PRs, filtering client-side by merged_at > since",
+        "FetchCommits(ctx, owner, repo string, since, until time.Time, authors []string) ([]*github.RepositoryCommit, error) with since/until, filtered client-side by author login",
+        "FetchMarkdownFile(ctx, owner, repo, path string) (content string, sha string, err error)",
+        "AutoTagIssues(ctx, owner, repo, projectID string, teamLabelMap map[string]string) error pages all project items; for each item with Team/Area set but missing label on linked issue, applies label via REST",
+        "Connector returns clear error if GITHUB_TOKEN credential is missing (not panic)",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Notion Source Connector",
+      "description": "As an AI coding agent, I need the Notion connector with discovery and typed fetch methods so that Notion pages and databases can be queried.",
+      "acceptanceCriteria": [
+        "internal/connector/notion/: New(token string) *Client wrapping jomei/notionapi",
+        "Discover(ctx, workspaceHint string) ([]DiscoveredItem, error) via POST /search with empty query; returns one item per page (notion_page) and database (notion_db)",
+        "FetchPage(ctx, pageID string) (content string, lastEditedTime time.Time, err error) fetches blocks recursively, converts to plain text: headings → # text, bullets → - text, paragraphs → plain text, toggles → > text",
+        "FetchDatabase(ctx, dbID string, updatedAfter time.Time) ([]DatabaseRow, error) queries with filter {timestamp: last_edited_time, after: updatedAfter}; each DatabaseRow has title property + linked page content fetched recursively",
+        "Connector returns clear error if NOTION_TOKEN credential is missing",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Grafana, PostHog, and SigNoz Connectors",
+      "description": "As an AI coding agent, I need the Grafana, PostHog, and SigNoz connectors so that all metrics sources can be discovered and queried.",
+      "acceptanceCriteria": [
+        "internal/connector/grafana/: New(baseURL, token string) *Client; Discover(ctx, dashboardURL string) extracts dashboard UID from URL, calls GET /api/dashboards/uid/:uid, returns one DiscoveredItem per panel; FetchPanel(ctx, dashboardUID, panelID string, from, to time.Time) (PanelData, error) via /api/ds/query",
+        "internal/connector/posthog/: New(host, apiKey string) *Client; Discover(ctx, projectID string) via GET /api/projects/:id/dashboards/, returns one item per insight/tile; FetchInsight(ctx, projectID, insightID string) (InsightResult, error) via GET /api/projects/:id/insights/:id/",
+        "internal/connector/signoz/: New(baseURL, apiKey string) *Client; Discover(ctx, target string) enumerates dashboards via SigNoz dashboard list API; FetchPanel(ctx, dashboardID, panelID string) (PanelData, error)",
+        "All three connectors return clear error if required credentials are missing",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "AI Generator Interface and Providers",
+      "description": "As an AI coding agent, I need the Generator interface and both provider implementations (Anthropic REST and ClaudeCode subprocess) so that AI generation can be called at runtime.",
+      "acceptanceCriteria": [
+        "internal/ai/generator.go: Generator interface with Generate(ctx context.Context, prompt string) (string, error)",
+        "internal/ai/anthropic.go: AnthropicProvider with apiKey and model fields; Generate posts to https://api.anthropic.com/v1/messages with body {model, max_tokens: 4096, messages: [{role: user, content: prompt}]}, headers x-api-key, anthropic-version: 2023-06-01, content-type: application/json; parses response and returns content[0].text; ANTHROPIC_API_KEY env var overrides config api_key if set",
+        "internal/ai/claude_code.go: ClaudeCodeProvider with binaryPath and model fields; Generate runs: claude --print --dangerously-skip-permissions --output-format stream-json [--model MODEL] PROMPT; streams stdout line by line; collects text from events where type is 'result' or 'content_block_delta' (field delta.text); returns concatenated text; on non-zero exit returns stderr content as error",
+        "internal/ai/factory.go: New(cfg config.AIConfig) (Generator, error) returns ClaudeCodeProvider if cfg.Provider == 'claude-code', AnthropicProvider if 'anthropic', error otherwise",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "AI Cached Generator",
+      "description": "As an AI coding agent, I need the CachedGenerator wrapper so that AI calls are deduplicated via SHA-256 of canonical inputs.",
+      "acceptanceCriteria": [
+        "internal/ai/cached_generator.go: CachedGenerator wraps a Generator and *store.Store",
+        "Generate(ctx, pipeline string, teamID *int64, inputs map[string]any, annotations []store.Annotation) (string, error): serializes inputs + annotations to canonical JSON (keys sorted alphabetically at every level), computes SHA-256 hex as inputHash, checks store.GetCacheEntry, returns cached output on hit without calling inner Generator",
+        "On cache miss: calls inner Generator.Generate with full prompt, stores result via store.SetCacheEntry, returns result",
+        "Unit tests with mock Generator: cache hit returns stored value without calling mock; cache miss calls mock and stores result; different inputs produce different hashes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "AI Pipelines: sprint_parse and goal_extraction",
+      "description": "As an AI coding agent, I need the sprint_parse and goal_extraction pipelines with full prompts and typed result structs so that sprint metadata and goals can be extracted from documents.",
+      "acceptanceCriteria": [
+        "All pipelines use shared prompt wrapper: 'You are analyzing a software team's status data. Respond ONLY with valid JSON matching this schema: <schema>{SCHEMA}</schema> [optional annotations block] <inputs>{INPUTS_JSON}</inputs>'",
+        "internal/pipeline/sprint_parse.go: input {sprint_plan_text}; output schema {start_date, total_sprints, current_sprint, goals}; start_date may be null; after successful run calls store.UpsertSprintMeta with parsed values; SprintParseResult struct defined",
+        "internal/pipeline/goal_extraction.go: input {goals_doc_text, sprint_plan_text}; output schema {goals: [{text, source}]}; source is 'goals_doc' or 'sprint_plan'; GoalExtractionResult struct defined",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "AI Pipelines: concerns and workload_estimation",
+      "description": "As an AI coding agent, I need the concerns and workload_estimation pipelines so that risks and resource loads can be identified from sprint data.",
+      "acceptanceCriteria": [
+        "internal/pipeline/concerns.go: input {open_issues, merged_prs, sprint_plan_text, extracted_goals, sprint_meta}; active annotations (non-archived) appended in annotations block; output schema {concerns: [{key, summary, explanation, severity}]}; severity values: high, medium, low; each concern has stable key derived from subject; ConcernsResult struct defined",
+        "internal/pipeline/workload.go: input {members: [{name, open_issues, merged_prs, recent_commits}], sprint_window: {start, end}, standard_sprint_days}; output schema {members: [{name, estimated_days, label}]}; label thresholds: LOW < 3, NORMAL 3-5, HIGH > 5; WorkloadResult struct defined",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "AI Pipelines: velocity_analysis, goal_alignment, and discovery_suggestion",
+      "description": "As an AI coding agent, I need the velocity, alignment, and discovery pipelines so that sprint velocity, org alignment, and source tagging suggestions are available.",
+      "acceptanceCriteria": [
+        "internal/pipeline/velocity.go: input {sprints: [{label, closed_issues, merged_prs, commit_count}]} (up to 4 sprints); output schema {sprints: [{label, score, breakdown: {issues, prs, commits}}]}; prompt instructs Claude to weight by difficulty to normalize score; VelocityResult struct defined",
+        "internal/pipeline/alignment.go: input {org_goals_text, team_goals: {team_id: [goals]}}; output schema {alignments: [{team_id, aligned, notes}], flags: [...]}; AlignmentResult struct defined",
+        "internal/pipeline/discovery.go: input {title, excerpt} (excerpt = first 500 chars); output schema {suggested_purpose, confidence, reasoning}; valid suggested_purpose: current_plan, next_plan, goals, metrics_panel, org_goals, org_milestones, unknown; valid confidence: high, medium, low; DiscoverySuggestionResult struct defined",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Pipeline Runner",
+      "description": "As an AI coding agent, I need the pipeline Runner struct with one typed method per pipeline so that the sync engine can call pipelines with structured inputs.",
+      "acceptanceCriteria": [
+        "internal/pipeline/runner.go: Runner struct holds *ai.CachedGenerator and *store.Store",
+        "RunSprintParse(ctx, teamID int64, sprintPlanText string) (*SprintParseResult, error)",
+        "RunGoalExtraction(ctx, teamID int64, goalsDocText, sprintPlanText string) (*GoalExtractionResult, error)",
+        "RunConcerns(ctx, teamID int64, input ConcernsInput) (*ConcernsResult, error)",
+        "RunWorkloadEstimation(ctx, teamID int64, input WorkloadInput) (*WorkloadResult, error)",
+        "RunVelocityAnalysis(ctx, teamID int64, input VelocityInput) (*VelocityResult, error)",
+        "RunGoalAlignment(ctx, orgGoalsText string, teamGoals map[int64][]string) (*AlignmentResult, error)",
+        "RunDiscoverySuggestion(ctx, title, excerpt string) (*DiscoverySuggestionResult, error)",
+        "Each method fetches active (archived=0) annotations for scope, assembles prompt using shared wrapper, calls CachedGenerator.Generate, unmarshals JSON response into typed result struct; returns ErrInvalidAIOutput if response is not valid JSON",
+        "Integration test: RunSprintParse with a short sample text using ClaudeCodeProvider returns non-nil result with at least one goal",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Sync Discovery Engine",
+      "description": "As an AI coding agent, I need the discovery pass in the sync engine so that new sources can be catalogued and AI-suggested with a purpose.",
+      "acceptanceCriteria": [
+        "internal/sync/engine.go: Engine struct with store *store.Store, github/notion/grafana/posthog/signoz clients, pipeline *pipeline.Runner; New(...) *Engine constructor",
+        "internal/sync/discover.go: (e *Engine) Discover(ctx, scope, target string) (syncRunID int64, err error): inserts sync_runs row with status='running', launches goroutine",
+        "Goroutine: calls appropriate connector's Discover based on scope (notion_workspace, github_repo, metrics_url); for each DiscoveredItem calls store.UpsertCatalogueItem (update metadata if exists, insert with status='untagged' if new); for each NEW item calls pipeline.RunDiscoverySuggestion and sets ai_suggested_purpose via store.UpdateCatalogueAISuggestion; calls store.UpdateSyncRun('completed', nil) on success or 'failed' with error string on failure",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Sync Engine (Incremental Sync)",
+      "description": "As an AI coding agent, I need the incremental sync engine so that configured sources are fetched and all relevant AI pipelines are triggered.",
+      "acceptanceCriteria": [
+        "internal/sync/sync.go: (e *Engine) Sync(ctx, scope string, teamID *int64) (syncRunID int64, err error)",
+        "Checks for existing 'running' sync run for same scope+teamID; returns existing syncRunID without creating new run if already running",
+        "Inserts sync_runs row with status='running', launches goroutine",
+        "Goroutine: loads source_configs for scope; for each source fetches incrementally using connector method with source_catalogue.updated_at as since; updates source_catalogue.updated_at on success",
+        "Runs pipelines in order: sprint_parse → goal_extraction → concerns → workload_estimation → velocity_analysis (cache handles dedup; always call even if data unchanged)",
+        "If scope == 'org': also runs goal_alignment with all teams' extracted goals + org goals",
+        "Partial source failures collected per-source in error JSON; do not abort the run; store.UpdateSyncRun('completed', nil) on success or 'failed' with error JSON on failure",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Sync API Handlers",
+      "description": "As an AI coding agent, I need the sync API endpoints wired to the engine so that the TUI can trigger and poll sync runs.",
+      "acceptanceCriteria": [
+        "api/sync.go stubs replaced: POST /sync validates scope and team_id (required when scope='team'), checks for existing running sync run, returns 409 {\"error\": \"sync already running\"} if busy, calls engine.Sync, returns {\"sync_run_id\": N}",
+        "GET /sync/{run_id} returns the sync_runs row as JSON",
+        "POST /config/sources/discover validates scope + target, calls engine.Discover, returns {\"sync_run_id\": N}",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "REST API: Org Overview and Teams List",
+      "description": "As an AI coding agent, I need GET /org/overview and GET /teams implemented so that the TUI can display the top-level dashboard.",
+      "acceptanceCriteria": [
+        "GET /org/overview: loads all teams; for each team loads latest sprint_meta, cached concerns output, cached workload output; loads goal_alignment output; computes cross-team per-member workload aggregate; returns {teams: [{id, name, current_sprint, total_sprints, risk_level, focus, last_synced_at}], workload: [{name, total_days, label, breakdown: {team_name: days}}], goal_alignment: {alignments, flags}, last_synced_at}",
+        "GET /teams: returns [{id, name, members: [{id, display_name, github_username, notion_user_id}]}]",
+        "Both endpoints return last_synced_at from the most recent completed sync_runs row for the relevant scope",
+        "Before first sync, endpoints return 200 with empty arrays/null fields and last_synced_at: null",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "REST API: Team Data Endpoints",
+      "description": "As an AI coding agent, I need all team-specific data endpoints implemented so that the TUI can drill into sprint, goals, workload, velocity, and metrics for a team.",
+      "acceptanceCriteria": [
+        "GET /teams/{id}/sprint: computes current_sprint as floor(days_elapsed/7)+1 where days_elapsed=today-start_date; returns {plan_type, start_date, current_sprint, total_sprints, start_date_missing, next_plan_start_risk, goals, last_synced_at}; start_date_missing: true when sprint_meta.start_date is NULL; next_plan_start_risk: true when total_sprints > 4 AND next-plan source_config exists for team",
+        "GET /teams/{id}/goals: returns {goals: [{text, source}], concerns: [{key, summary, explanation, severity, annotation_id}], last_synced_at} from cached pipeline outputs",
+        "GET /teams/{id}/workload: returns {members: [{name, estimated_days, label}], last_synced_at} from cache",
+        "GET /teams/{id}/velocity: returns {sprints: [{label, score, breakdown: {issues, prs, commits}}], last_synced_at} from cache",
+        "GET /teams/{id}/metrics: loads configured metrics_panel source configs for team, returns panel data {panels: [{title, value, panel_id}]}",
+        "All endpoints return 200 with empty data and last_synced_at: null before first sync",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "REST API: Config Teams and Members CRUD",
+      "description": "As an AI coding agent, I need the config teams and members CRUD endpoints so that teams and members can be managed via the API.",
+      "acceptanceCriteria": [
+        "api/config_teams.go stubs replaced with real implementations",
+        "POST /config/teams accepts {name}, creates team, returns team JSON",
+        "PUT /config/teams/{id} accepts {name}, updates team, returns updated team",
+        "DELETE /config/teams/{id} deletes team and cascades to members",
+        "POST /config/teams/{id}/members accepts {display_name, github_username, notion_user_id}, returns member JSON",
+        "PUT /config/members/{id} updates member fields",
+        "DELETE /config/members/{id} deletes member",
+        "All endpoints require edit role",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "REST API: Config Sources and Annotations CRUD",
+      "description": "As an AI coding agent, I need the config sources and config annotations endpoints so that source tagging and annotation management work via the API.",
+      "acceptanceCriteria": [
+        "GET /config/sources returns full source catalogue with status and ai_suggested_purpose",
+        "PUT /config/sources/{id} accepts {status, purpose, team_id, config_meta}; updates source config; if purpose='current_plan' and different current_plan already exists for team, triggers plan rollover (archive item annotations, delete old config, insert new config)",
+        "GET /config/annotations returns all annotations grouped by tier (item vs team), including archived ones",
+        "POST /config/annotations accepts {tier, team_id, item_ref, content}, creates annotation",
+        "PUT /config/annotations/{id} updates content",
+        "DELETE /config/annotations/{id} hard-deletes annotation",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "REST API: Config Users CRUD and Inline Annotations",
+      "description": "As an AI coding agent, I need the config users endpoints and the inline annotations mount point so that user management and in-context annotation work via the API.",
+      "acceptanceCriteria": [
+        "GET /config/users returns list of users (edit role only)",
+        "POST /config/users accepts {username, password, role}, hashes password before storing (edit role only)",
+        "PUT /config/users/{id} accepts {role, password} for updates (edit role only)",
+        "DELETE /config/users/{id} deletes user; returns 409 if deleting the last edit-role user (edit role only)",
+        "POST /annotations, PUT /annotations/{id}, DELETE /annotations/{id}: same logic as /config/annotations counterparts, different mount point",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "Plan Rollover Logic",
+      "description": "As an AI coding agent, I need plan rollover logic so that when a new current plan is tagged, all item-tier annotations for the old plan are archived and sprint metadata is reset.",
+      "acceptanceCriteria": [
+        "PUT /config/sources/{id} with purpose='current_plan': looks up existing source_configs row for (team_id, purpose='current_plan'); if it differs from the new one: calls store.ArchiveItemAnnotationsForPlan(teamID) (UPDATE annotations SET archived=1 WHERE team_id=? AND tier='item' AND archived=0), deletes old source_configs row, inserts new source_configs row, triggers sprint_parse pipeline for new document (or marks for re-parse on next sync)",
+        "If no previous current plan exists: simply inserts new source_configs row",
+        "team-tier annotations for the same team are untouched (SQL WHERE tier='item' ensures this)",
+        "Archived annotations visible in GET /config/annotations with archived: true but excluded from all pipeline inputs (pipeline.Runner methods filter WHERE archived=0)",
+        "Unit test: create team, create item and team annotations, trigger rollover, verify item annotations have archived=1 and team annotations have archived=0",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "TUI Client and App Architecture",
+      "description": "As an AI coding agent, I need the TUI HTTP client and Bubble Tea app scaffolding so that the TUI has a foundation for all views.",
+      "acceptanceCriteria": [
+        "internal/tui/client/client.go: typed HTTP client; reads JWT from ~/.dashboard/token (JSON with token and refresh_token fields); on 401 attempts token refresh; if refresh fails clears ~/.dashboard/token and returns error to trigger login screen",
+        "Client methods: Login, GetOrgOverview, GetTeams, GetSprint, GetGoals, GetWorkload, GetVelocity, GetMetrics, PostSync, GetSyncRun, PostAnnotation, PutAnnotation, DeleteAnnotation, GetConfigSources, PutConfigSource, PostDiscover, GetConfigAnnotations, GetConfigUsers, PostConfigUser, PutConfigUser, DeleteConfigUser",
+        "internal/tui/app.go: App struct with views []tea.Model (stack), client *client.Client, syncPoller *SyncPoller; Enter pushes view; Esc/Backspace pops view; q quits only when stack depth is 1",
+        "cmd/tui/main.go updated to launch Bubble Tea program with App as root model",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "TUI Login View",
+      "description": "As an AI coding agent, I need the TUI login screen so that users can authenticate from the terminal.",
+      "acceptanceCriteria": [
+        "internal/tui/views/login.go: username + password text inputs using Bubble Tea text input component",
+        "Submit with Enter; calls client.Login; on success stores {token, refresh_token} to ~/.dashboard/token as JSON",
+        "On failure shows error message below the form",
+        "On startup, app checks if ~/.dashboard/token exists and contains a valid (non-expired) token; if not, pushes login view",
+        "App also presents login view when server returns 401 and refresh fails",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "TUI Org Overview View",
+      "description": "As an AI coding agent, I need the org overview TUI view so that the head of product sees all teams at a glance.",
+      "acceptanceCriteria": [
+        "internal/tui/views/org_overview.go: list of team cards showing [Team Name]  Sprint N/M  |  Risk: HIGH  |  Focus: ...",
+        "j/k navigate up/down through team cards",
+        "Enter on a team pushes Team View",
+        "Bottom row shows org-level metrics summary",
+        "Footer shows Last synced: <timestamp> (or Never synced)",
+        "R triggers full org sync and shows sync banner",
+        "Before first sync shows: No data yet. Press r to sync this team (or R for full org).",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "TUI Team View and Sprint Status View",
+      "description": "As an AI coding agent, I need the team drill-down view and sprint status view so that users can navigate into team data.",
+      "acceptanceCriteria": [
+        "internal/tui/views/team.go: sub-menu with options: Sprint & Plan Status, Goals & Concerns, Resource/Workload, Velocity, Business Metrics; j/k + Enter to drill in; r triggers team sync",
+        "internal/tui/views/sprint.go: shows Week N of M",
+        "If start_date_missing: true shows warning 'Sprint start date not found. Add it to the plan document or annotate it in Config.' in amber using Lip Gloss",
+        "If next_plan_start_risk: true shows red warning 'Current plan extended to sprint M. This delays the next plan's start.'",
+        "Lists plan goals below",
+        "Footer shows Last synced: <timestamp>",
+        "No data state shows placeholder message",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-032",
+      "title": "TUI Goals & Concerns View and Annotation Panel",
+      "description": "As an AI coding agent, I need the goals & concerns view and the annotation panel overlay so that users can see AI-flagged risks and annotate them inline.",
+      "acceptanceCriteria": [
+        "internal/tui/views/goals.go: two sections separated by a divider: Goals and Concerns",
+        "Each concern shows [HIGH] summary with explanation below; colors via Lip Gloss: HIGH=red, MEDIUM=yellow, LOW=gray",
+        "Concerns with key starting with stale_annotation_ are prefixed [STALE ANNOTATION] in orange",
+        "a on any item pushes Annotation Panel",
+        "Footer shows Last synced: <timestamp>",
+        "internal/tui/views/annotate.go: overlay/pushed view showing item being annotated; Tab toggles tier selector between [Item-level] and [Team-level] (default Item); multi-line text input; Ctrl+Enter submits, calls POST /annotations, pops view",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "title": "TUI Workload and Velocity Views",
+      "description": "As an AI coding agent, I need the workload and velocity TUI views so that resource load and sprint velocity are visible.",
+      "acceptanceCriteria": [
+        "internal/tui/views/workload.go: per-member table showing Alice: 3.5 days [HIGH]; color-coded labels matching concerns colors (HIGH=red, NORMAL=default, LOW=gray); a on a row pushes annotation panel with team-level tier pre-selected",
+        "internal/tui/views/velocity.go: sparkline-style chart using unicode block characters (▁▂▃▄▅▆▇█) across recent sprints; below chart: tabular breakdown per sprint with label, score, and issues/prs/commits breakdown",
+        "Both views show footer with Last synced: <timestamp>",
+        "Both views show no-data placeholder when no sync has completed",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "title": "TUI Business Metrics View",
+      "description": "As an AI coding agent, I need the business metrics TUI view so that configured metric panels are visible.",
+      "acceptanceCriteria": [
+        "internal/tui/views/metrics.go: list of configured panels showing title + latest value",
+        "Footer shows Last synced: <timestamp>",
+        "No-data placeholder shown before first sync",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-035",
+      "title": "TUI Sync Banner Component",
+      "description": "As an AI coding agent, I need the sync banner component and SyncPoller so that in-progress syncs are visible in all views.",
+      "acceptanceCriteria": [
+        "internal/tui/components/banner.go: renders at top of every view when sync run is active: [ Sync in progress... (Team Name) ]",
+        "SyncPoller goroutine polls GET /sync/{run_id} every 2 seconds via time.Ticker; sends SyncDoneMsg or SyncFailedMsg to Bubble Tea program via tea.Program.Send",
+        "On completed: banner disappears",
+        "On failed: banner turns red showing [ Sync failed: <error> ]  Press Enter to dismiss",
+        "App model handles SyncDoneMsg and SyncFailedMsg messages to update banner state",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-036",
+      "title": "TUI Config Views: Teams and Sources",
+      "description": "As an AI coding agent, I need the config teams and config sources TUI views so that users can manage teams and source tagging from the terminal.",
+      "acceptanceCriteria": [
+        "internal/tui/views/config/config_root.go: sub-menu with Teams & Members, Sources, Business Metrics, Annotations, Users",
+        "internal/tui/views/config/config_teams.go: list teams; Enter expands team and shows members; n creates new team (text input popup); e edits name; d deletes with confirm prompt 'Delete team \"X\"? [y/N]'; on team expand list members with n/e/d",
+        "internal/tui/views/config/config_sources.go: catalogue table showing [type]  title  |  status  |  purpose; f filters by status; Enter on item opens tagging panel (set purpose, team, shows AI suggestion); D runs discovery (prompts for target URL/scope)",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-037",
+      "title": "TUI Config Views: Annotations and Users",
+      "description": "As an AI coding agent, I need the config annotations and config users TUI views so that annotation history and user management are accessible from the terminal.",
+      "acceptanceCriteria": [
+        "internal/tui/views/config/config_annotations.go: two groups: Team-level and Item-level; archived items grayed out with [Archived] label; e edits content; d hard-deletes",
+        "internal/tui/views/config/config_users.go: only visible/accessible to edit-role users; list users with role; n creates user (username + password + role inputs); e edits role/password; d deletes user",
+        "go build ./... succeeds",
+        "Typecheck passes"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-038",
+      "title": "Server Wiring and Integration",
+      "description": "As an AI coding agent, I need graceful shutdown, cache pruning, auto-tagger scheduling, and the admin autotag endpoint so that the server runs robustly in production.",
+      "acceptanceCriteria": [
+        "cmd/server/main.go: signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM) for graceful shutdown; http.Server.Shutdown(ctx) called on signal",
+        "In-progress sync goroutines tracked with sync.WaitGroup; shutdown waits up to 30 seconds before forcing exit",
+        "On server startup: store.PruneStaleCache(30 * 24 * time.Hour) called to delete ai_cache entries older than 30 days",
+        "time.Ticker every 12 hours calls engine.AutoTag(ctx) for all configured GitHub repos; engine.AutoTag calls github.AutoTagIssues for each configured repo+project",
+        "GET /admin/autotag endpoint (edit role only) triggers engine.AutoTag immediately, returns {\"status\": \"ok\"}",
+        "go build ./... succeeds with no errors",
+        "Typecheck passes"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "Integration Smoke Test Script",
+      "description": "As an AI coding agent, I need a smoke test shell script so that the full system can be verified end-to-end.",
+      "acceptanceCriteria": [
+        "scripts/smoke_test.sh: starts server in background",
+        "Logs in with admin credentials, saves token to variable",
+        "Calls GET /teams — expects HTTP 200",
+        "Calls GET /org/overview — expects HTTP 200",
+        "Calls POST /sync with scope=org — expects 200 with sync_run_id",
+        "Polls GET /sync/{run_id} every 2 seconds until status is completed or 60-second timeout",
+        "Calls GET /teams/{id}/sprint — expects HTTP 200",
+        "Prints PASS or FAIL; on failure prints curl output for the failing request",
+        "Script is executable (chmod +x)",
+        "Typecheck passes"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-040",
+      "title": "Hardening: Missing Data and Concurrent Sync Edge Cases",
+      "description": "As an AI coding agent, I need edge case handling for missing sprint dates, extended sprints, and concurrent sync prevention so that the system is robust.",
+      "acceptanceCriteria": [
+        "GET /teams/{id}/sprint returns start_date_missing: true when sprint_meta.start_date is NULL; no panic or 500 error",
+        "TUI Sprint view shows missing-date warning in amber when start_date_missing is true",
+        "When total_sprints > 4 and next-plan source config exists for team, GET /teams/{id}/sprint returns next_plan_start_risk: true; TUI shows Week N of M with M highlighted in amber if M > 4",
+        "POST /sync returns 409 {\"error\": \"sync already running for this scope\"} if running sync exists for same scope+teamID; no second goroutine started",
+        "Per-source fetch errors collected during sync: sync run still completes for other sources; sync_runs.error stores JSON {\"source_id\": \"error message\"}; TUI sync error banner lists which sources failed",
+        "go test ./... passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "title": "Hardening: Error Handling, Credential Checks, and Race Condition Tests",
+      "description": "As an AI coding agent, I need robust error handling for AI failures, missing credentials, first-run state, and JWT expiry, plus race condition tests so that the system is production-ready.",
+      "acceptanceCriteria": [
+        "Pipeline runner returns typed ErrInvalidAIOutput when Claude's response is not valid JSON; logs raw output at ERROR level; TUI shows 'AI processing error — try syncing again.' with dismiss option (d or Enter); no crash",
+        "Each connector checks required env vars in constructor; if missing returns ErrCredentialsMissing with var name; discovery/sync surfaces clear error in TUI (not panic or generic 500)",
+        "Before any sync completed, all data endpoints (/teams/{id}/sprint, /goals, /workload, /velocity, /metrics) return 200 with empty arrays/null fields and last_synced_at: null; TUI shows no-data placeholder in each view",
+        "TUI client automatically attempts refresh on 401; if refresh fails clears ~/.dashboard/token and presents login screen; no crash",
+        "go test -race ./... passes with no data races detected",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

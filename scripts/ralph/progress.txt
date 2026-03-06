@@ -1,0 +1,29 @@
+## Codebase Patterns
+- Module path is `github.com/your-org/dashboard`
+- Config loaded from `config.yaml` (YAML) via `gopkg.in/yaml.v3`
+- Env vars loaded from `.env` via manual key=value parse in `internal/config/env.go` (no third-party library)
+- Placeholder package files (single `package <name>` line) are used to satisfy directory requirements without real implementations
+- `go vet ./...` is the typecheck command for this project
+- `go build ./...` for full build verification
+---
+
+# Ralph Progress Log
+Started: Fri Mar  6 16:09:22 CET 2026
+---
+
+## 2026-03-06 - US-001
+- Initialized Go module `github.com/your-org/dashboard`
+- Created full directory tree: cmd/server, cmd/tui, internal/{api,auth,config,connector/{github,notion,grafana,posthog,signoz},ai,pipeline,store,sync,tui}
+- Implemented `internal/config/config.go` with Config/ServerConfig/StorageConfig/AuthConfig/AIConfig structs and Load()
+- Implemented `internal/config/env.go` with manual .env parsing and token accessor functions
+- Created `cmd/server/main.go` with --config flag, masked config summary output
+- Created `cmd/tui/main.go` with --server flag
+- Created `config.example.yaml` with all required fields
+- Added all dependencies: chi, bubbletea, lipgloss, sqlite, golang-migrate, jwt/v5, x/crypto, yaml.v3, go-github/v60, notionapi
+- Both binaries build and exit cleanly (exit code 0)
+- Files changed: go.mod, go.sum, config.example.yaml, cmd/server/main.go, cmd/tui/main.go, internal/config/config.go, internal/config/env.go, internal/* placeholder files
+- **Learnings for future iterations:**
+  - All internal package dirs need at minimum a `package <name>` placeholder to build
+  - `config.yaml` is gitignored-worthy (contains secrets) but `config.example.yaml` is the template
+  - `golang-migrate` and `modernc.org/sqlite` are already in go.mod for future store work
+---
