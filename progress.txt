@@ -1,3 +1,20 @@
+## 2026-03-06 - US-029
+- Created `internal/tui/views/login.go`: LoginView with two textinput.Model fields (username + password) using `github.com/charmbracelet/bubbles/textinput`
+- Submit on Enter: calls client.Login; on success emits LoginDoneMsg; on failure displays error below the form
+- Password field uses EchoPassword mode
+- Added `IsTokenExpired()` to `internal/tui/client/client.go`: base64url-decodes JWT payload, checks `exp` claim without signature verification
+- Added `ShowLoginMsg` to `internal/tui/app.go`: App pushes a new LoginView when received
+- App handles `LoginDoneMsg` by popping the login view
+- Updated `cmd/tui/main.go`: LoadToken + IsTokenExpired on startup; pushes LoginView if no valid token
+- Added `github.com/charmbracelet/bubbles v1.0.0` to go.mod (plus transitive deps: atotto/clipboard, clipperhouse/displaywidth, clipperhouse/uax29)
+- Files changed: `internal/tui/views/login.go`, `internal/tui/client/client.go`, `internal/tui/app.go`, `cmd/tui/main.go`, `go.mod`, `go.sum`
+- **Learnings for future iterations:**
+  - `charmbracelet/bubbles` is now available; use `textinput.New()` / `textinput.Blink` for text inputs in TUI views
+  - `client.IsTokenExpired()` decodes JWT exp without needing the JWT library; safe to call after `LoadToken()`
+  - `ShowLoginMsg{}` triggers login from any view; `LoginDoneMsg{}` pops the login view from the App stack
+  - Views package: `internal/tui/views/` — all TUI view models live here; import cycle safe (views import client, not tui)
+---
+
 ## 2026-03-06 - US-028
 - Created `internal/tui/client/client.go`: typed HTTP client with token file storage at `~/.dashboard/token`
 - Client handles 401 by attempting token refresh via POST /auth/refresh; on failure clears token file and returns `ErrUnauthenticated`
@@ -162,6 +179,8 @@
 - SigNoz uses `SIGNOZ-API-KEY` header (not `Authorization: Bearer`)
 - Always use `strings.TrimRight(baseURL, "/")` to normalize base URLs
 - `go build ./...` and `go vet ./...` are the quality checks
+- `charmbracelet/bubbles v1.0.0` is in go.mod; use `textinput.New()` for TUI text input fields
+- TUI views live in `internal/tui/views/`; they import `internal/tui/client` but NOT `internal/tui` (avoids import cycle)
 - Pipeline prompt pattern: `buildPrompt(schema, rawInputs, annotations)` → put in `inputs["prompt"]` → call `CachedGenerator.Generate(ctx, pipelineName, &teamID, inputs, nil)`
 - sync_runs status CHECK is `('running', 'done', 'error')` — use 'done'/'error', NOT 'completed'/'failed'
 - Always use `IF NOT EXISTS` for migrations
