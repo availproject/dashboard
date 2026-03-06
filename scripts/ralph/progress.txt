@@ -14,6 +14,9 @@
 - Test helper: use `t.TempDir() + "/test.db"` with `New()` for store tests (avoids `:memory:` connection-sharing issues with golang-migrate)
 - Standard testing package (no testify); use `t.Fatal`/`t.Error` directly
 - `scanMember` takes `*sql.Rows` (not `*sql.Row`) since team_members uses QueryContext for multi-row scans
+- **TIME COMPARISON GOTCHA**: modernc/sqlite driver stores Go `time.Time` params in RFC 3339 format; SQLite's `CURRENT_TIMESTAMP` uses `"YYYY-MM-DD HH:MM:SS"`. These formats do NOT compare correctly with `<`/`>`. Fix: format Go time params explicitly with `.UTC().Format("2006-01-02 15:04:05")` when they must compare against `CURRENT_TIMESTAMP`
+- **AI cache prune**: use `cutoff := time.Now().UTC().Add(-olderThan).Format("2006-01-02 15:04:05")` then `WHERE created_at <= ?` (note `<=` to include same-second entries when olderThan=0)
+- **NULL-safe upsert for ai_cache**: SQLite UNIQUE with NULL team_id doesn't conflict; use SELECT-then-INSERT/UPDATE pattern (same as source_configs)
 ---
 
 # Ralph Progress Log
@@ -74,6 +77,22 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - `UpdateUser`/`UpdateTeam` return `sql.ErrNoRows` when RowsAffected == 0 (not-found sentinel)
   - `scanMember` helper takes `*sql.Rows` (not `*sql.Row`) since fetching by ID uses QueryContext + rows.Next()
   - No testify in go.mod; use standard `testing` package with `t.Fatal`/`t.Error`
+---
+
+## 2026-03-06 - US-006
+- Implemented `internal/store/annotations.go`: CreateAnnotation, UpdateAnnotation, DeleteAnnotation, ListAnnotations, ArchiveItemAnnotationsForPlan
+- Implemented `internal/store/ai_cache.go`: GetCacheEntry, SetCacheEntry, PruneStaleCache; uses SELECT-then-INSERT/UPDATE for NULL-safe upsert
+- Implemented `internal/store/sync_runs.go`: CreateSyncRun (status='running'), UpdateSyncRun, GetSyncRun
+- Implemented `internal/store/sprint_meta.go`: UpsertSprintMeta (ON CONFLICT DO UPDATE on team_id,plan_type), GetSprintMeta
+- Implemented `internal/store/refresh_tokens.go`: CreateRefreshToken, GetRefreshTokenByHash, DeleteRefreshToken, DeleteExpiredRefreshTokens
+- Added tests for all five table groups in `internal/store/store_test.go`
+- Files changed: internal/store/annotations.go, ai_cache.go, sync_runs.go, sprint_meta.go, refresh_tokens.go, store_test.go
+- `go build ./...`, `go vet ./...`, `go test ./internal/store/...` all pass (15 tests)
+- **Learnings for future iterations:**
+  - modernc/sqlite stores Go `time.Time` params in RFC 3339; compare against `CURRENT_TIMESTAMP` by formatting Go time as `t.UTC().Format("2006-01-02 15:04:05")`
+  - PruneStaleCache(0) should delete everything including current-second entries; use `<=` not `<` in the comparison
+  - Sprint_meta has UNIQUE(team_id, plan_type) with both NOT NULL → ON CONFLICT DO UPDATE works safely (unlike source_configs where team_id can be NULL)
+  - ListAnnotations returns ALL annotations for a team (both archived and not), callers filter as needed
 ---
 
 ## 2026-03-06 - US-005
