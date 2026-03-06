@@ -5,6 +5,8 @@
 - Placeholder package files (single `package <name>` line) are used to satisfy directory requirements without real implementations
 - `go vet ./...` is the typecheck command for this project
 - `go build ./...` for full build verification
+- Migration files use 4-digit prefix format: `0001_name.up.sql` / `0001_name.down.sql`
+- Migrations embedded via `//go:embed migrations` in `internal/store/embed.go`; variable `migrationsFS embed.FS` used by US-003 store infrastructure
 ---
 
 # Ralph Progress Log
@@ -26,4 +28,16 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - All internal package dirs need at minimum a `package <name>` placeholder to build
   - `config.yaml` is gitignored-worthy (contains secrets) but `config.example.yaml` is the template
   - `golang-migrate` and `modernc.org/sqlite` are already in go.mod for future store work
+---
+
+## 2026-03-06 - US-002
+- Created `internal/store/migrations/` with 16 files: 0001–0008 each with .up.sql and .down.sql
+- Created `internal/store/embed.go` with `//go:embed migrations` and `var migrationsFS embed.FS`
+- Schema: users, teams, team_members, source_catalogue, source_configs, annotations, ai_cache, sync_runs, sprint_meta, refresh_tokens
+- Files changed: internal/store/embed.go, internal/store/migrations/0001_users.{up,down}.sql, 0002_teams.{up,down}.sql, 0003_source_catalogue.{up,down}.sql, 0004_source_configs.{up,down}.sql, 0005_annotations.{up,down}.sql, 0006_ai_cache.{up,down}.sql, 0007_sync_runs_sprint_meta.{up,down}.sql, 0008_refresh_tokens.{up,down}.sql
+- `go vet ./...` and `go build ./...` pass
+- **Learnings for future iterations:**
+  - `migrationsFS` is exported from `internal/store/embed.go`; US-003 should use it with `iofs.New(migrationsFS, "migrations")` to wire into golang-migrate
+  - Down migrations drop tables in reverse order of creation to respect FK constraints
+  - `team_id` in ai_cache, annotations, source_configs, sync_runs is nullable (no NOT NULL) to allow org-level records
 ---
