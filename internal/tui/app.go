@@ -5,12 +5,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/your-org/dashboard/internal/tui/client"
+	"github.com/your-org/dashboard/internal/tui/views"
 )
 
 // PushViewMsg is sent by any view to push a new view onto the stack.
 type PushViewMsg struct {
 	View tea.Model
 }
+
+// ShowLoginMsg is sent when an API call fails with ErrUnauthenticated.
+// The App will push a new LoginView on top of the current stack.
+type ShowLoginMsg struct{}
 
 // SyncDoneMsg is sent by SyncPoller when a sync run finishes.
 type SyncDoneMsg struct {
@@ -107,6 +112,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PushViewMsg:
 		a.views = append(a.views, m.View)
 		return a, m.View.Init()
+
+	case views.LoginDoneMsg:
+		// Pop the login view; if the stack is now empty push a placeholder.
+		if len(a.views) > 1 {
+			a.views = a.views[:len(a.views)-1]
+		}
+		return a, nil
+
+	case ShowLoginMsg:
+		lv := views.NewLoginView(a.client)
+		a.views = append(a.views, lv)
+		return a, lv.Init()
 
 	case syncPollMsg:
 		return a, a.syncPoller.Poll(m.RunID)

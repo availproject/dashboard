@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -48,6 +50,34 @@ func New(serverAddr string) *Client {
 // HasToken returns true if the client has a token in memory.
 func (c *Client) HasToken() bool {
 	return c.token != ""
+}
+
+// IsTokenExpired returns true if the in-memory token is empty or its JWT exp
+// claim is in the past. It does not verify the token signature.
+func (c *Client) IsTokenExpired() bool {
+	if c.token == "" {
+		return true
+	}
+	parts := strings.Split(c.token, ".")
+	if len(parts) != 3 {
+		return true
+	}
+	// JWT uses raw base64url (no padding); add padding before decoding.
+	payload := parts[1]
+	for len(payload)%4 != 0 {
+		payload += "="
+	}
+	data, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return true
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return true
+	}
+	return time.Now().Unix() >= claims.Exp
 }
 
 // LoadToken reads token+refresh_token from ~/.dashboard/token into memory.
