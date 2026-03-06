@@ -1,3 +1,16 @@
+## 2026-03-06 - US-021
+- Implemented `POST /sync`: validates scope ('team'/'org'), requires team_id when scope='team', checks store for existing running sync run (409 if busy), calls engine.Sync, returns {sync_run_id: N}
+- Implemented `GET /sync/{run_id}`: parses run_id from URL, fetches from store, returns SyncRun as JSON (404 if not found)
+- Implemented `POST /config/sources/discover`: validates scope + target, calls engine.Discover, returns {sync_run_id: N}
+- Updated `SyncEngine` interface in `router.go` to include `Sync` and `Discover` methods with proper context signatures
+- Files changed: `internal/api/sync.go`, `internal/api/config_sources.go`, `internal/api/router.go`
+- **Learnings for future iterations:**
+  - `SyncEngine` interface is in `router.go`; `Deps.Engine` field is type `SyncEngine`
+  - `cmd/server/main.go` does not yet wire up Engine — it will need to be updated in a future story
+  - chi URL params use `chi.URLParam(r, "run_id")` matching the route pattern `{run_id}`
+  - The handler checks `store.GetRunningSyncRun` directly for the 409 check before calling engine.Sync (avoids race and gives clean 409 semantics)
+---
+
 ## 2026-03-06 - US-020
 - Implemented `(e *Engine) Sync(ctx, scope string, teamID *int64) (syncRunID int64, err error)` in `internal/sync/sync.go`
 - Checks for existing 'running' sync run via new `store.GetRunningSyncRun`; returns existing ID without creating a new run
