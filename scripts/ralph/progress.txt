@@ -198,3 +198,36 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - `Block.GetChildren` pagination: pass `*notion.Pagination{StartCursor: cursor}` or nil for first page
   - jomei/notionapi was already in go.mod as indirect; no `go get` needed
 ---
+
+## 2026-03-06 - US-018
+- Implemented `internal/pipeline/runner.go`: Runner struct with *ai.CachedGenerator and *store.Store
+- New(gen, store) constructor; activeAnnotations() helper filters archived==0 from ListAnnotations
+- Internal generate() helper: builds prompt, calls gen.Generate, unmarshals JSON → returns ErrInvalidAIOutput on parse failure
+- Methods: RunSprintParse, RunGoalExtraction, RunConcerns, RunWorkloadEstimation, RunVelocityAnalysis, RunGoalAlignment, RunDiscoverySuggestion
+- RunSprintParse additionally calls store.UpsertSprintMeta after successful parse
+- Input types defined: ConcernsInput, WorkloadInput, VelocityInput
+- Created `internal/pipeline/runner_test.go`: integration test skips when `claude` binary not in PATH
+- Integration test uses `ai.New(config.AIConfig{Provider: "claude-code"})` factory (newClaudeCodeProvider is unexported)
+- Files changed: internal/pipeline/runner.go, internal/pipeline/runner_test.go
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - `newClaudeCodeProvider` is unexported; use `ai.New(config.AIConfig{Provider: "claude-code"})` factory in tests
+  - `store.ListAnnotations` returns ALL annotations (not just active); filter client-side with `a.Archived == 0`
+  - Runner methods implement pipeline logic directly (not via package-level Run* functions) for precise ErrInvalidAIOutput control
+  - `ErrInvalidAIOutput` sentinel lives in `internal/pipeline/runner.go`
+---
+
+## 2026-03-06 - US-019
+- Implemented `internal/sync/engine.go`: Engine struct with store, github/notion/grafana/posthog/signoz clients, pipeline runner; New(...) constructor
+- Implemented `internal/sync/discover.go`: Discover(ctx, scope, target) creates sync_run, launches goroutine
+- Goroutine: routes to notion/github/metrics connectors by scope; upserts each DiscoveredItem; runs RunDiscoverySuggestion for items with no AI suggestion; marks run completed/failed
+- `metrics_url` scope tries all three metrics connectors (grafana, posthog, signoz), silently ignoring individual connector errors
+- Files changed: internal/sync/engine.go, internal/sync/discover.go
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - `internal/sync` package is named `sync`; no stdlib sync import needed in these files (goroutines launched with `go`, no WaitGroup)
+  - Import alias needed for github connector: `ghconn "github.com/your-org/dashboard/internal/connector/github"` to avoid ambiguity
+  - Detect "new" catalogue items by checking `AISuggestion.Valid == false`; new items from UpsertCatalogueItem won't have a suggestion yet
+  - For `metrics_url` scope: try all three connectors, ignore per-connector errors (URL may only match one service)
+  - Goroutine uses `context.Background()` (not parent ctx) to avoid cancellation when HTTP request completes
+---
