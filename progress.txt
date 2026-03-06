@@ -1,3 +1,17 @@
+## 2026-03-06 - US-038
+- Created `internal/sync/autotag.go`: Engine.AutoTag iterates active github_project catalogue items, parses source_meta for owner/repo/project_id, builds teamLabelMap from ListTeams, calls github.AutoTagIssues per project
+- Created `internal/api/admin.go`: GET /admin/autotag (edit role) calls engine.AutoTag and returns {status: "ok"}
+- Updated `internal/api/router.go`: added AutoTag(ctx) to SyncEngine interface; registered GET /admin/autotag route
+- Updated `cmd/server/main.go`: graceful shutdown with signal.NotifyContext + http.Server.Shutdown(30s); wg for autotag ticker + server goroutines; PruneStaleCache(30 days) on startup; AutoTag ticker every 12h; full Engine wiring (connectors, AI, pipeline, sync engine)
+- Files changed: `cmd/server/main.go`, `internal/sync/autotag.go`, `internal/api/admin.go`, `internal/api/router.go`
+- **Learnings for future iterations:**
+  - `pipeline.New(cachedGen, st)` is the constructor (not `NewRunner`); takes CachedGenerator and Store
+  - `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)` is the Go 1.16+ idiom for graceful shutdown
+  - `_ = wg` on a sync.WaitGroup causes vet error (copies lock value); remove the blank assignment
+  - AutoTag source_meta for github_project: `{owner, repo, project_id}` — all three required; skip if any missing
+  - `pipeline.New(nil, st)` would panic on first use; guard with `if gen != nil` before creating CachedGenerator
+---
+
 ## 2026-03-06 - US-037
 - Created `internal/tui/views/config/config_annotations.go`: ConfigAnnotationsView loads all annotations via GetConfigAnnotations; team-level then item-level sections; archived entries show "[Archived]" in dim; e edits content (textarea, Ctrl+S to save); d hard-deletes with y/N confirmation
 - Created `internal/tui/views/config/config_users.go`: ConfigUsersView with multi-step input flow for n (username→password→role); e edits role then optional password; d deletes with y/N confirm; role normalized to view/edit
