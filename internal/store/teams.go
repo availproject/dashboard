@@ -49,6 +49,16 @@ func (s *Store) DeleteTeam(ctx context.Context, id int64) error {
 	return err
 }
 
+// GetTeam returns the team with the given ID.
+func (s *Store) GetTeam(ctx context.Context, id int64) (*Team, error) {
+	var t Team
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, created_at FROM teams WHERE id = ?`, id)
+	if err := row.Scan(&t.ID, &t.Name, &t.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // ListTeams returns all teams ordered by id.
 func (s *Store) ListTeams(ctx context.Context) ([]*Team, error) {
 	const q = `SELECT id, name, created_at FROM teams ORDER BY id`
@@ -69,9 +79,9 @@ func (s *Store) ListTeams(ctx context.Context) ([]*Team, error) {
 }
 
 // AddMember inserts a new team member and returns the created record.
-func (s *Store) AddMember(ctx context.Context, teamID int64, name string, githubLogin, role sql.NullString) (*TeamMember, error) {
-	const q = `INSERT INTO team_members (team_id, name, github_login, role) VALUES (?, ?, ?, ?)`
-	res, err := s.db.ExecContext(ctx, q, teamID, name, githubLogin, role)
+func (s *Store) AddMember(ctx context.Context, teamID int64, name string, githubLogin, notionUserID, role sql.NullString) (*TeamMember, error) {
+	const q = `INSERT INTO team_members (team_id, name, github_login, notion_user_id, role) VALUES (?, ?, ?, ?, ?)`
+	res, err := s.db.ExecContext(ctx, q, teamID, name, githubLogin, notionUserID, role)
 	if err != nil {
 		return nil, fmt.Errorf("add member: %w", err)
 	}
@@ -82,10 +92,10 @@ func (s *Store) AddMember(ctx context.Context, teamID int64, name string, github
 	return s.getMemberByID(ctx, id)
 }
 
-// UpdateMember updates a team member's name, github_login, and role.
-func (s *Store) UpdateMember(ctx context.Context, id int64, name string, githubLogin, role sql.NullString) error {
-	const q = `UPDATE team_members SET name = ?, github_login = ?, role = ? WHERE id = ?`
-	res, err := s.db.ExecContext(ctx, q, name, githubLogin, role, id)
+// UpdateMember updates a team member's name, github_login, notion_user_id, and role.
+func (s *Store) UpdateMember(ctx context.Context, id int64, name string, githubLogin, notionUserID, role sql.NullString) error {
+	const q = `UPDATE team_members SET name = ?, github_login = ?, notion_user_id = ?, role = ? WHERE id = ?`
+	res, err := s.db.ExecContext(ctx, q, name, githubLogin, notionUserID, role, id)
 	if err != nil {
 		return fmt.Errorf("update member: %w", err)
 	}

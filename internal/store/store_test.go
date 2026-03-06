@@ -135,7 +135,7 @@ func TestTeamCRUD(t *testing.T) {
 	}
 
 	// AddMember
-	m, err := s.AddMember(ctx, team.ID, "Alice", sql.NullString{String: "alice-gh", Valid: true}, sql.NullString{String: "engineer", Valid: true})
+	m, err := s.AddMember(ctx, team.ID, "Alice", sql.NullString{String: "alice-gh", Valid: true}, sql.NullString{}, sql.NullString{String: "engineer", Valid: true})
 	if err != nil {
 		t.Fatalf("AddMember: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestTeamCRUD(t *testing.T) {
 	}
 
 	// AddMember without optional fields
-	m2, err := s.AddMember(ctx, team.ID, "Bob", sql.NullString{}, sql.NullString{})
+	m2, err := s.AddMember(ctx, team.ID, "Bob", sql.NullString{}, sql.NullString{}, sql.NullString{})
 	if err != nil {
 		t.Fatalf("AddMember (no optional): %v", err)
 	}
@@ -159,7 +159,7 @@ func TestTeamCRUD(t *testing.T) {
 	}
 
 	// UpdateMember
-	if err := s.UpdateMember(ctx, m.ID, "Alice Smith", sql.NullString{String: "asmith", Valid: true}, sql.NullString{String: "lead", Valid: true}); err != nil {
+	if err := s.UpdateMember(ctx, m.ID, "Alice Smith", sql.NullString{String: "asmith", Valid: true}, sql.NullString{}, sql.NullString{String: "lead", Valid: true}); err != nil {
 		t.Fatalf("UpdateMember: %v", err)
 	}
 
