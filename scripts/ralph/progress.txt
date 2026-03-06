@@ -17,6 +17,9 @@
 - **TIME COMPARISON GOTCHA**: modernc/sqlite driver stores Go `time.Time` params in RFC 3339 format; SQLite's `CURRENT_TIMESTAMP` uses `"YYYY-MM-DD HH:MM:SS"`. These formats do NOT compare correctly with `<`/`>`. Fix: format Go time params explicitly with `.UTC().Format("2006-01-02 15:04:05")` when they must compare against `CURRENT_TIMESTAMP`
 - **AI cache prune**: use `cutoff := time.Now().UTC().Add(-olderThan).Format("2006-01-02 15:04:05")` then `WHERE created_at <= ?` (note `<=` to include same-second entries when olderThan=0)
 - **NULL-safe upsert for ai_cache**: SQLite UNIQUE with NULL team_id doesn't conflict; use SELECT-then-INSERT/UPDATE pattern (same as source_configs)
+- **Bootstrap pattern**: `Bootstrap(st *store.Store, cfg *config.Config)` calls `st.ListUsers`, inserts admin only when empty; stores password hash directly (no re-hash)
+- **Middleware context keys**: use unexported `contextKey` string type with constants `contextKeyUsername`/`contextKeyRole` to avoid collisions
+- **RequireRole logic**: 'edit' satisfies any role; 'view' satisfies only 'view'; empty/unknown role denied always
 ---
 
 # Ralph Progress Log
@@ -118,4 +121,31 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - golang-jwt/v5: use `jwt.ParseWithClaims` with `*Claims` pointer; check `token.Valid` after parsing
   - Refresh token pattern: rand.Read(32 bytes) → hex-encode for raw token; sha256.Sum256(rawToken) → hex-encode for stored hash
   - `jwt.RegisteredClaims` embeds in custom Claims struct; set both `Sub` field and `RegisteredClaims.Subject` for compatibility
+---
+
+## 2026-03-06 - US-008
+- Implemented `internal/auth/bootstrap.go`: Bootstrap(store, cfg) checks if users table is empty via ListUsers; if empty, creates admin user with username and pre-hashed password from config, role='edit'
+- Implemented `internal/api/middleware.go`: RequireAuth(secret) validates Bearer JWT, sets contextKeyUsername and contextKeyRole in request context (typed contextKey string type); RequireRole(role) checks context role with 'edit' satisfying any requirement
+- Created `internal/api/middleware_test.go`: tests RequireAuth (missing token, invalid token, valid token sets context), RequireRole (6 cases covering edit/view combinations)
+- Files changed: internal/auth/bootstrap.go, internal/api/middleware.go, internal/api/middleware_test.go
+- `go vet ./...`, `go build ./...`, `go test ./internal/auth/... ./internal/api/...` all pass
+- **Learnings for future iterations:**
+  - Use unexported `contextKey` string type for context keys to avoid collisions with other packages
+  - Bootstrap directly stores pre-hashed passwords (no double-hashing); the hash in config was already produced by `hash-password` subcommand
+  - roleAllowed: 'edit' role passes all checks; 'view' only passes 'view'; anything else fails
+---
+
+## 2026-03-06 - US-009
+- Implemented `internal/api/response.go`: writeJSON, writeError, readJSON (1MB limit via io.LimitReader)
+- Implemented `internal/api/auth.go`: POST /auth/login (verify password → issue JWT + refresh token), POST /auth/refresh (hash lookup → rotate token → issue new pair)
+- Implemented `internal/api/router.go`: NewRouter(deps *Deps); Deps struct with Store, Config, Engine (SyncEngine interface), Pipeline (PipelineRunner interface); chi router with public auth routes + RequireAuth group + RequireRole('edit') sub-group
+- Created stub handlers returning 501: org.go, teams.go, config_teams.go, config_sources.go, config_annotations.go, config_users.go, sync.go, annotations.go
+- Updated `cmd/server/main.go`: hash-password subcommand (os.Args[1] check before flag.Parse), store open+migrate, bootstrap, Deps wiring, http.ListenAndServe
+- Files changed: internal/api/response.go, auth.go, router.go, org.go, teams.go, config_teams.go, config_sources.go, config_annotations.go, config_users.go, sync.go, annotations.go, cmd/server/main.go
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - `auth.CheckPassword` returns `bool`, not `error` — use `if !auth.CheckPassword(...)` pattern
+  - `http.MaxBytesReader` requires a ResponseWriter; use `io.LimitReader` instead when only the request is available
+  - chi router: group mutations under nested `r.Group` with `RequireRole('edit')` middleware inside the `RequireAuth` group
+  - hash-password subcommand must check `os.Args[1]` before `flag.Parse()` to avoid flag parsing errors
 ---
