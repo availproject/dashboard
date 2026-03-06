@@ -1,3 +1,20 @@
+## 2026-03-06 - US-020
+- Implemented `(e *Engine) Sync(ctx, scope string, teamID *int64) (syncRunID int64, err error)` in `internal/sync/sync.go`
+- Checks for existing 'running' sync run via new `store.GetRunningSyncRun`; returns existing ID without creating a new run
+- Inserts sync_run with status='running', launches goroutine
+- Goroutine: for team scope, calls `fetchTeamData` (loads source_configs, fetches notion pages/dbs and github PRs/issues/commits incrementally with `updated_at` as `since`, updates `updated_at` on success via `store.TouchCatalogueItem`)
+- Runs pipelines in order: sprint_parse → goal_extraction → concerns → workload_estimation → velocity_analysis
+- For org scope: runs all team pipelines, then fetches org_goals/org_milestones sources, calls `RunGoalAlignment` with all teams' extracted goals + org goals text
+- Partial source failures collected in error map; run marked 'error' with JSON if any errors, 'done' on full success
+- Files changed: `internal/sync/sync.go`, `internal/store/sync_runs.go`, `internal/store/catalogue.go`
+- **Learnings for future iterations:**
+  - sync_runs status CHECK constraint is `('running', 'done', 'error')` — NOT 'completed'/'failed'; existing discover.go uses wrong values (bug in US-019 code, errors discarded)
+  - `GetSourceConfigsForScope(ctx, sql.NullInt64{})` returns org-level configs (team_id IS NULL); pass a valid NullInt64 for team-scoped configs
+  - source_catalogue.updated_at serves as the `since` timestamp for incremental fetching
+  - github FetchIssues requires a non-empty label; skip issue fetch if no label in source_meta
+  - `store.TouchCatalogueItem` added to update updated_at after successful fetch
+---
+
 ## 2026-03-06 - US-017
 - Implemented `VelocityResult`/`SprintVelocity`/`VelocityBreakdown`/`VelocitySprint` structs and `RunVelocity` in `internal/pipeline/velocity.go`: takes sprints (up to 4) with closed_issues, merged_prs, commit_count; outputs normalized score + breakdown per sprint
 - Implemented `AlignmentResult`/`TeamAlignment` structs and `RunAlignment` in `internal/pipeline/alignment.go`: org-level pipeline (nil teamID), takes org_goals_text + team_goals map; outputs per-team aligned bool + notes, plus flags
@@ -46,6 +63,7 @@
 - Always use `strings.TrimRight(baseURL, "/")` to normalize base URLs
 - `go build ./...` and `go vet ./...` are the quality checks
 - Pipeline prompt pattern: `buildPrompt(schema, rawInputs, annotations)` → put in `inputs["prompt"]` → call `CachedGenerator.Generate(ctx, pipelineName, &teamID, inputs, nil)`
+- sync_runs status CHECK is `('running', 'done', 'error')` — use 'done'/'error', NOT 'completed'/'failed'
 - Always use `IF NOT EXISTS` for migrations
 - Config uses `gopkg.in/yaml.v3` for YAML loading
 
