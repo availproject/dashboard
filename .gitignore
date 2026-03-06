@@ -9,6 +9,6 @@ config.yaml
 
 # Binaries
 bin/
-tui
+/tui
 
 # Misc

@@ -335,20 +335,34 @@ type discoverDoneMsg struct {
 	err   error
 }
 
+var discoverScopes = []string{"notion_workspace", "github_repo", "metrics_url"}
+
+var discoverScopeHelp = map[string]string{
+	"notion_workspace": "target: leave blank (enumerates all pages the integration can access)",
+	"github_repo":      "target: owner/repo  (e.g. acme/backend)",
+	"metrics_url":      "target: dashboard URL  (Grafana, PostHog, or SigNoz)",
+}
+
+var discoverScopePlaceholder = map[string]string{
+	"notion_workspace": "(leave blank)",
+	"github_repo":      "acme/backend",
+	"metrics_url":      "https://grafana.example.com/d/abc123",
+}
+
 type configDiscoverView struct {
-	c      *client.Client
-	target textinput.Model
-	scope  string // "team" | "org"
-	running bool
-	errMsg  string
+	c        *client.Client
+	target   textinput.Model
+	scopeIdx int
+	running  bool
+	errMsg   string
 }
 
 func newConfigDiscoverView(c *client.Client) *configDiscoverView {
 	ti := textinput.New()
-	ti.Placeholder = "https://notion.so/... or github.com/org/repo"
+	ti.Placeholder = discoverScopePlaceholder[discoverScopes[0]]
 	ti.Width = 60
 	ti.Focus()
-	return &configDiscoverView{c: c, target: ti, scope: "org"}
+	return &configDiscoverView{c: c, target: ti}
 }
 
 func (v *configDiscoverView) Init() tea.Cmd {
@@ -371,11 +385,9 @@ func (v *configDiscoverView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			return v, func() tea.Msg { return msgs.PopViewMsg{} }
 		case "tab":
-			if v.scope == "org" {
-				v.scope = "team"
-			} else {
-				v.scope = "org"
-			}
+			v.scopeIdx = (v.scopeIdx + 1) % len(discoverScopes)
+			v.target.Placeholder = discoverScopePlaceholder[discoverScopes[v.scopeIdx]]
+			v.target.SetValue("")
 			return v, nil
 		case "enter":
 			if !v.running {
@@ -391,8 +403,8 @@ func (v *configDiscoverView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (v *configDiscoverView) runDiscover() tea.Cmd {
 	c := v.c
+	scope := discoverScopes[v.scopeIdx]
 	target := strings.TrimSpace(v.target.Value())
-	scope := v.scope
 	return func() tea.Msg {
 		runID, err := c.PostDiscover(scope, target)
 		return discoverDoneMsg{runID: runID, err: err}
@@ -400,17 +412,19 @@ func (v *configDiscoverView) runDiscover() tea.Cmd {
 }
 
 func (v *configDiscoverView) View() string {
+	scope := discoverScopes[v.scopeIdx]
 	var sb strings.Builder
 	sb.WriteString("\n  " + cfgSelectedStyle.Render("Discover Sources") + "\n\n")
-	sb.WriteString("  Scope: " + cfgSelectedStyle.Render(v.scope) + "  " + cfgDimStyle.Render("(Tab to toggle)") + "\n\n")
-	sb.WriteString("  Target URL: " + v.target.View() + "\n")
+	sb.WriteString("  Source type: " + cfgSelectedStyle.Render(scope) + "  " + cfgDimStyle.Render("(Tab to cycle)") + "\n")
+	sb.WriteString("  " + cfgDimStyle.Render(discoverScopeHelp[scope]) + "\n\n")
+	sb.WriteString("  Target: " + v.target.View() + "\n")
 	if v.errMsg != "" {
 		sb.WriteString("\n  Error: " + v.errMsg + "\n")
 	}
 	if v.running {
 		sb.WriteString("\n  Running discovery…\n")
 	}
-	sb.WriteString("\n" + cfgDimStyle.Render("  Enter to start  ·  Tab toggle scope  ·  Esc to cancel") + "\n")
+	sb.WriteString("\n" + cfgDimStyle.Render("  Enter to start  ·  Tab cycle source type  ·  Esc to cancel") + "\n")
 	return sb.String()
 }
 
