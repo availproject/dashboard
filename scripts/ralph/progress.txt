@@ -25,6 +25,9 @@
 - **git tree resolution**: `GetTree` needs real SHA; use `GetBranch → .GetCommit().GetCommit().GetTree().GetSHA()`
 - **GraphQL pagination**: cursor type is `*string` (nil for first page); set to `&endCursor` for next pages
 - **connector package**: shared `DiscoveredItem` + `Discoverer` interface live in `internal/connector/connector.go`
+- **chi.URLParam pattern**: use `chi.URLParam(r, "id")` + `strconv.ParseInt` for {id} URL params in handlers
+- **metrics_panel source config**: purpose string is `"metrics_panel"`; panel_id extracted from catalogue item's source_meta JSON
+- **concern annotation linking**: build `item_ref → annotation.ID` map from ListAnnotations, match against concern.Key
 ---
 
 # Ralph Progress Log
@@ -230,4 +233,21 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - Detect "new" catalogue items by checking `AISuggestion.Valid == false`; new items from UpsertCatalogueItem won't have a suggestion yet
   - For `metrics_url` scope: try all three connectors, ignore per-connector errors (URL may only match one service)
   - Goroutine uses `context.Background()` (not parent ctx) to avoid cancellation when HTTP request completes
+---
+
+## 2026-03-06 - US-023
+- Implemented 5 team data endpoints in `internal/api/teams.go`:
+  - `handleTeamSprint`: loads sprint_meta + sprint_parse cache; computes current_sprint via floor(days_elapsed/7)+1 from start_date; checks next_plan_start_risk (total_sprints>4 AND next_plan source_config exists)
+  - `handleTeamGoals`: loads goal_extraction + concerns cache; builds item_ref→annotation_id map to enrich concern items
+  - `handleTeamWorkload`: loads workload cache, returns members with name/estimated_days/label
+  - `handleTeamVelocity`: loads velocity cache, returns sprints with label/score/breakdown
+  - `handleTeamMetrics`: loads metrics_panel source configs for team, fetches catalogue items, extracts panel_id from source_meta JSON
+- All endpoints return 200 with empty slices before first sync
+- Files changed: internal/api/teams.go
+- `go build ./...` and `go vet ./...` pass
+- **Learnings for future iterations:**
+  - chi.URLParam(r, "id") + strconv.ParseInt extracts {id} from URL in handlers
+  - metrics_panel purpose = "metrics_panel"; panel_id lives in catalogue item source_meta JSON
+  - concern annotation_id: match concern.Key against item_ref in annotations map
+  - Empty slices should be initialized (not nil) for clean JSON: `[]T{}`
 ---
