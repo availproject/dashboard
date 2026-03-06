@@ -107,3 +107,15 @@ Started: Fri Mar  6 16:09:22 CET 2026
   - GetSourceConfigsForScope uses conditional SQL: `WHERE team_id = ?` vs `WHERE team_id IS NULL` depending on NullInt64.Valid
   - scanCatalogue/scanSourceConfig use *sql.Rows (not *sql.Row) for consistency with getMemberByID pattern
 ---
+
+## 2026-03-06 - US-007
+- Implemented `internal/auth/password.go`: HashPassword (bcrypt cost 12), CheckPassword
+- Implemented `internal/auth/jwt.go`: Claims struct, IssueToken (1h expiry, HS256), IssueRefreshToken (32 random bytes → raw hex + SHA-256 hex hash), ValidateToken
+- Created `internal/auth/auth_test.go`: round-trip JWT, expired token rejection, password hash+check, refresh token uniqueness
+- Files changed: internal/auth/password.go, internal/auth/jwt.go, internal/auth/auth_test.go
+- `go build ./...`, `go vet ./...`, `go test ./internal/auth/...` all pass (4 tests)
+- **Learnings for future iterations:**
+  - golang-jwt/v5: use `jwt.ParseWithClaims` with `*Claims` pointer; check `token.Valid` after parsing
+  - Refresh token pattern: rand.Read(32 bytes) → hex-encode for raw token; sha256.Sum256(rawToken) → hex-encode for stored hash
+  - `jwt.RegisteredClaims` embeds in custom Claims struct; set both `Sub` field and `RegisteredClaims.Subject` for compatibility
+---

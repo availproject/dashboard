@@ -26,10 +26,10 @@
     },
     {
       "id": "US-002",
-      "title": "Database Migrations (0001–0008)",
+      "title": "Database Migrations (0001\u20130008)",
       "description": "As an AI coding agent, I need all SQLite migration files with up/down SQL so that the database schema is fully defined and versioned.",
       "acceptanceCriteria": [
-        "Migration files in internal/store/migrations/ numbered 0001–0008, each with .up.sql and .down.sql, embedded via //go:embed",
+        "Migration files in internal/store/migrations/ numbered 0001\u20130008, each with .up.sql and .down.sql, embedded via //go:embed",
         "0001_users.up.sql: users table with id, username (UNIQUE), password_hash, role CHECK(role IN ('view','edit')), created_at",
         "0002_teams.up.sql: teams table and team_members table with foreign key to teams ON DELETE CASCADE",
         "0003_source_catalogue.up.sql: source_catalogue table with UNIQUE(source_type, external_id); valid source_type values: github_repo, notion_page, notion_db, grafana_panel, posthog_panel, signoz_panel; valid status values: untagged, configured, ignored",
@@ -120,7 +120,7 @@
         "Tests pass"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
@@ -186,7 +186,7 @@
       "acceptanceCriteria": [
         "internal/connector/notion/: New(token string) *Client wrapping jomei/notionapi",
         "Discover(ctx, workspaceHint string) ([]DiscoveredItem, error) via POST /search with empty query; returns one item per page (notion_page) and database (notion_db)",
-        "FetchPage(ctx, pageID string) (content string, lastEditedTime time.Time, err error) fetches blocks recursively, converts to plain text: headings → # text, bullets → - text, paragraphs → plain text, toggles → > text",
+        "FetchPage(ctx, pageID string) (content string, lastEditedTime time.Time, err error) fetches blocks recursively, converts to plain text: headings \u2192 # text, bullets \u2192 - text, paragraphs \u2192 plain text, toggles \u2192 > text",
         "FetchDatabase(ctx, dbID string, updatedAfter time.Time) ([]DatabaseRow, error) queries with filter {timestamp: last_edited_time, after: updatedAfter}; each DatabaseRow has title property + linked page content fetched recursively",
         "Connector returns clear error if NOTION_TOKEN credential is missing",
         "go build ./... succeeds",
@@ -334,7 +334,7 @@
         "Checks for existing 'running' sync run for same scope+teamID; returns existing syncRunID without creating new run if already running",
         "Inserts sync_runs row with status='running', launches goroutine",
         "Goroutine: loads source_configs for scope; for each source fetches incrementally using connector method with source_catalogue.updated_at as since; updates source_catalogue.updated_at on success",
-        "Runs pipelines in order: sprint_parse → goal_extraction → concerns → workload_estimation → velocity_analysis (cache handles dedup; always call even if data unchanged)",
+        "Runs pipelines in order: sprint_parse \u2192 goal_extraction \u2192 concerns \u2192 workload_estimation \u2192 velocity_analysis (cache handles dedup; always call even if data unchanged)",
         "If scope == 'org': also runs goal_alignment with all teams' extracted goals + org goals",
         "Partial source failures collected per-source in error JSON; do not abort the run; store.UpdateSyncRun('completed', nil) on success or 'failed' with error JSON on failure",
         "go build ./... succeeds",
@@ -560,7 +560,7 @@
       "description": "As an AI coding agent, I need the workload and velocity TUI views so that resource load and sprint velocity are visible.",
       "acceptanceCriteria": [
         "internal/tui/views/workload.go: per-member table showing Alice: 3.5 days [HIGH]; color-coded labels matching concerns colors (HIGH=red, NORMAL=default, LOW=gray); a on a row pushes annotation panel with team-level tier pre-selected",
-        "internal/tui/views/velocity.go: sparkline-style chart using unicode block characters (▁▂▃▄▅▆▇█) across recent sprints; below chart: tabular breakdown per sprint with label, score, and issues/prs/commits breakdown",
+        "internal/tui/views/velocity.go: sparkline-style chart using unicode block characters (\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588) across recent sprints; below chart: tabular breakdown per sprint with label, score, and issues/prs/commits breakdown",
         "Both views show footer with Last synced: <timestamp>",
         "Both views show no-data placeholder when no sync has completed",
         "go build ./... succeeds",
@@ -655,11 +655,11 @@
       "acceptanceCriteria": [
         "scripts/smoke_test.sh: starts server in background",
         "Logs in with admin credentials, saves token to variable",
-        "Calls GET /teams — expects HTTP 200",
-        "Calls GET /org/overview — expects HTTP 200",
-        "Calls POST /sync with scope=org — expects 200 with sync_run_id",
+        "Calls GET /teams \u2014 expects HTTP 200",
+        "Calls GET /org/overview \u2014 expects HTTP 200",
+        "Calls POST /sync with scope=org \u2014 expects 200 with sync_run_id",
         "Polls GET /sync/{run_id} every 2 seconds until status is completed or 60-second timeout",
-        "Calls GET /teams/{id}/sprint — expects HTTP 200",
+        "Calls GET /teams/{id}/sprint \u2014 expects HTTP 200",
         "Prints PASS or FAIL; on failure prints curl output for the failing request",
         "Script is executable (chmod +x)",
         "Typecheck passes"
@@ -691,7 +691,7 @@
       "title": "Hardening: Error Handling, Credential Checks, and Race Condition Tests",
       "description": "As an AI coding agent, I need robust error handling for AI failures, missing credentials, first-run state, and JWT expiry, plus race condition tests so that the system is production-ready.",
       "acceptanceCriteria": [
-        "Pipeline runner returns typed ErrInvalidAIOutput when Claude's response is not valid JSON; logs raw output at ERROR level; TUI shows 'AI processing error — try syncing again.' with dismiss option (d or Enter); no crash",
+        "Pipeline runner returns typed ErrInvalidAIOutput when Claude's response is not valid JSON; logs raw output at ERROR level; TUI shows 'AI processing error \u2014 try syncing again.' with dismiss option (d or Enter); no crash",
         "Each connector checks required env vars in constructor; if missing returns ErrCredentialsMissing with var name; discovery/sync surfaces clear error in TUI (not panic or generic 500)",
         "Before any sync completed, all data endpoints (/teams/{id}/sprint, /goals, /workload, /velocity, /metrics) return 200 with empty arrays/null fields and last_synced_at: null; TUI shows no-data placeholder in each view",
         "TUI client automatically attempts refresh on 401; if refresh fails clears ~/.dashboard/token and presents login screen; no crash",
