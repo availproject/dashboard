@@ -1,0 +1,26 @@
+## Codebase Patterns
+- All connectors follow the same pattern: `New(credentials...) *Client`, `checkCredentials() error`, `Discover(ctx, target) ([]DiscoveredItem, error)`
+- Connectors return clear errors for missing credentials rather than panicking
+- `connector.DiscoveredItem` is the shared type from `internal/connector/connector.go`
+- Use `net/http` directly (no external HTTP libraries) for metrics connectors
+- Grafana dashboard URLs follow `/d/{uid}/{slug}` pattern
+- PostHog pagination uses `next` field (absolute URL) in list responses
+- SigNoz uses `SIGNOZ-API-KEY` header (not `Authorization: Bearer`)
+- Always use `strings.TrimRight(baseURL, "/")` to normalize base URLs
+- `go build ./...` and `go vet ./...` are the quality checks
+- Always use `IF NOT EXISTS` for migrations
+- Config uses `gopkg.in/yaml.v3` for YAML loading
+
+---
+
+## 2026-03-06 - US-012
+- Implemented Grafana connector: `New`, `Discover` (extracts UID from URL, fetches dashboard panels), `FetchPanel` (re-fetches dashboard for targets, POSTs to `/api/ds/query`)
+- Implemented PostHog connector: `New`, `Discover` (paginates `/api/projects/:id/dashboards/`, one item per insight tile), `FetchInsight` (GET `/api/projects/:id/insights/:id/`)
+- Implemented SigNoz connector: `New`, `Discover` (lists all dashboards, one item per widget), `FetchPanel` (fetches dashboard, returns panel query config)
+- Files changed: `internal/connector/grafana/grafana.go`, `internal/connector/posthog/posthog.go`, `internal/connector/signoz/signoz.go`
+- **Learnings for future iterations:**
+  - Grafana `/api/ds/query` is a POST endpoint requiring datasource + targets from the dashboard definition
+  - SigNoz uses `SIGNOZ-API-KEY` header (not `Authorization: Bearer`) — check their API docs
+  - PostHog pagination: `next` field is an absolute URL; strip the host prefix before reusing as path
+  - SigNoz FetchPanel returns the panel's query definition (not executed results) since executing `/api/v3/query_range` requires time range from the caller
+---
