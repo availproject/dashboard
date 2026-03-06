@@ -718,3 +718,108 @@ func (c *Client) DeleteConfigUser(id int64) error {
 	}
 	return checkStatus(resp, http.StatusNoContent)
 }
+
+// TeamConfigResponse is returned by PostConfigTeam and PutConfigTeam.
+type TeamConfigResponse struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// MemberConfigResponse is returned by PostConfigMember.
+type MemberConfigResponse struct {
+	ID             int64   `json:"id"`
+	TeamID         int64   `json:"team_id"`
+	DisplayName    string  `json:"display_name"`
+	GithubUsername *string `json:"github_username"`
+	NotionUserID   *string `json:"notion_user_id"`
+}
+
+// PostConfigTeam creates a new team.
+func (c *Client) PostConfigTeam(name string) (*TeamConfigResponse, error) {
+	body, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRequest("POST", c.serverAddr+"/config/teams", body)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusCreated); err != nil {
+		return nil, err
+	}
+	var result TeamConfigResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// PutConfigTeam renames a team.
+func (c *Client) PutConfigTeam(id int64, name string) (*TeamConfigResponse, error) {
+	body, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRequest("PUT", fmt.Sprintf("%s/config/teams/%d", c.serverAddr, id), body)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result TeamConfigResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// DeleteConfigTeam deletes a team.
+func (c *Client) DeleteConfigTeam(id int64) error {
+	resp, err := c.doRequest("DELETE", fmt.Sprintf("%s/config/teams/%d", c.serverAddr, id), nil)
+	if err != nil {
+		return err
+	}
+	return checkStatus(resp, http.StatusNoContent)
+}
+
+// PostConfigMember adds a member to a team.
+func (c *Client) PostConfigMember(teamID int64, displayName string, githubUsername, notionUserID *string) (*MemberConfigResponse, error) {
+	body, err := json.Marshal(map[string]any{
+		"display_name":    displayName,
+		"github_username": githubUsername,
+		"notion_user_id":  notionUserID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRequest("POST", fmt.Sprintf("%s/config/teams/%d/members", c.serverAddr, teamID), body)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusCreated); err != nil {
+		return nil, err
+	}
+	var result MemberConfigResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// PutConfigMember updates a team member.
+func (c *Client) PutConfigMember(id int64, displayName string, githubUsername, notionUserID *string) error {
+	body, err := json.Marshal(map[string]any{
+		"display_name":    displayName,
+		"github_username": githubUsername,
+		"notion_user_id":  notionUserID,
+	})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest("PUT", fmt.Sprintf("%s/config/members/%d", c.serverAddr, id), body)
+	if err != nil {
+		return err
+	}
+	return checkStatus(resp, http.StatusNoContent)
+}
+
+// DeleteConfigMember removes a team member.
+func (c *Client) DeleteConfigMember(id int64) error {
+	resp, err := c.doRequest("DELETE", fmt.Sprintf("%s/config/members/%d", c.serverAddr, id), nil)
+	if err != nil {
+		return err
+	}
+	return checkStatus(resp, http.StatusNoContent)
+}
