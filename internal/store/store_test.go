@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // newTestStore creates a file-based SQLite store in a temp dir for testing.
@@ -374,4 +375,424 @@ func TestSourceConfigCRUD(t *testing.T) {
 	if len(configs) != 1 {
 		t.Errorf("after DeleteSourceConfig: got %d configs, want 1", len(configs))
 	}
+}
+
+// ---- Annotations ----
+
+func TestAnnotationCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	team, err := s.CreateTeam(ctx, "Beta")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
+
+	// CreateAnnotation (item tier)
+	a, err := s.CreateAnnotation(ctx, teamID, sql.NullString{String: "issue-42", Valid: true}, "item", "This is blocked")
+	if err != nil {
+		t.Fatalf("CreateAnnotation: %v", err)
+	}
+	if a.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if a.Tier != "item" {
+		t.Errorf("tier: got %q, want %q", a.Tier, "item")
+	}
+	if a.Archived != 0 {
+		t.Errorf("archived default: got %d, want 0", a.Archived)
+	}
+
+	// CreateAnnotation (team tier)
+	a2, err := s.CreateAnnotation(ctx, teamID, sql.NullString{}, "team", "Team is on vacation")
+	if err != nil {
+		t.Fatalf("CreateAnnotation (team): %v", err)
+	}
+	if a2.Tier != "team" {
+		t.Errorf("tier: got %q, want %q", a2.Tier, "team")
+	}
+	if a2.ItemRef.Valid {
+		t.Error("expected item_ref to be NULL")
+	}
+
+	// UpdateAnnotation
+	if err := s.UpdateAnnotation(ctx, a.ID, "Updated content"); err != nil {
+		t.Fatalf("UpdateAnnotation: %v", err)
+	}
+
+	// ListAnnotations (by team)
+	anns, err := s.ListAnnotations(ctx, teamID)
+	if err != nil {
+		t.Fatalf("ListAnnotations: %v", err)
+	}
+	if len(anns) != 2 {
+		t.Errorf("ListAnnotations: got %d, want 2", len(anns))
+	}
+	if anns[0].Content != "Updated content" {
+		t.Errorf("content after update: got %q", anns[0].Content)
+	}
+
+	// ArchiveItemAnnotationsForPlan
+	if err := s.ArchiveItemAnnotationsForPlan(ctx, team.ID); err != nil {
+		t.Fatalf("ArchiveItemAnnotationsForPlan: %v", err)
+	}
+	anns2, _ := s.ListAnnotations(ctx, teamID)
+	archived := 0
+	for _, ann := range anns2 {
+		if ann.Archived == 1 {
+			archived++
+		}
+	}
+	if archived != 1 {
+		t.Errorf("expected 1 archived annotation (item tier), got %d", archived)
+	}
+
+	// DeleteAnnotation
+	if err := s.DeleteAnnotation(ctx, a2.ID); err != nil {
+		t.Fatalf("DeleteAnnotation: %v", err)
+	}
+	anns3, _ := s.ListAnnotations(ctx, teamID)
+	if len(anns3) != 1 {
+		t.Errorf("after DeleteAnnotation: got %d, want 1", len(anns3))
+	}
+}
+
+func TestUpdateAnnotation_NotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	err := s.UpdateAnnotation(ctx, 999, "nope")
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+// ---- AI Cache ----
+
+func TestAICacheCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	team, err := s.CreateTeam(ctx, "Gamma")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
+
+	// GetCacheEntry (miss)
+	_, err = s.GetCacheEntry(ctx, "hash1", "concerns", teamID)
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows on miss, got %v", err)
+	}
+
+	// SetCacheEntry (insert)
+	entry, err := s.SetCacheEntry(ctx, "hash1", "concerns", teamID, `{"result":"ok"}`)
+	if err != nil {
+		t.Fatalf("SetCacheEntry: %v", err)
+	}
+	if entry.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if entry.Output != `{"result":"ok"}` {
+		t.Errorf("output: got %q", entry.Output)
+	}
+
+	// GetCacheEntry (hit)
+	got, err := s.GetCacheEntry(ctx, "hash1", "concerns", teamID)
+	if err != nil {
+		t.Fatalf("GetCacheEntry: %v", err)
+	}
+	if got.ID != entry.ID {
+		t.Errorf("id mismatch: got %d, want %d", got.ID, entry.ID)
+	}
+
+	// SetCacheEntry (update existing)
+	updated, err := s.SetCacheEntry(ctx, "hash1", "concerns", teamID, `{"result":"updated"}`)
+	if err != nil {
+		t.Fatalf("SetCacheEntry (update): %v", err)
+	}
+	if updated.ID != entry.ID {
+		t.Errorf("update changed ID: got %d, want %d", updated.ID, entry.ID)
+	}
+	if updated.Output != `{"result":"updated"}` {
+		t.Errorf("updated output: got %q", updated.Output)
+	}
+
+	// SetCacheEntry (org-level, team_id IS NULL)
+	orgEntry, err := s.SetCacheEntry(ctx, "hash2", "velocity", sql.NullInt64{}, `{"org":"data"}`)
+	if err != nil {
+		t.Fatalf("SetCacheEntry (org): %v", err)
+	}
+	if orgEntry.TeamID.Valid {
+		t.Error("expected team_id to be NULL for org cache entry")
+	}
+
+	// PruneStaleCache (nothing old enough to prune)
+	if err := s.PruneStaleCache(ctx, time.Hour); err != nil {
+		t.Fatalf("PruneStaleCache: %v", err)
+	}
+	_, err = s.GetCacheEntry(ctx, "hash1", "concerns", teamID)
+	if err != nil {
+		t.Errorf("entry should still exist after prune: %v", err)
+	}
+
+	// PruneStaleCache with zero duration prunes everything
+	if err := s.PruneStaleCache(ctx, 0); err != nil {
+		t.Fatalf("PruneStaleCache (zero): %v", err)
+	}
+	_, err = s.GetCacheEntry(ctx, "hash1", "concerns", teamID)
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows after prune all, got %v", err)
+	}
+}
+
+// ---- Sync Runs ----
+
+func TestSyncRunCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	team, err := s.CreateTeam(ctx, "Delta")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
+
+	// CreateSyncRun (team scope)
+	run, err := s.CreateSyncRun(ctx, teamID, "team")
+	if err != nil {
+		t.Fatalf("CreateSyncRun: %v", err)
+	}
+	if run.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if run.Status != "running" {
+		t.Errorf("status default: got %q, want %q", run.Status, "running")
+	}
+	if run.FinishedAt.Valid {
+		t.Error("expected finished_at to be NULL initially")
+	}
+
+	// CreateSyncRun (org scope)
+	orgRun, err := s.CreateSyncRun(ctx, sql.NullInt64{}, "org")
+	if err != nil {
+		t.Fatalf("CreateSyncRun (org): %v", err)
+	}
+	if orgRun.TeamID.Valid {
+		t.Error("expected team_id to be NULL for org sync run")
+	}
+
+	// GetSyncRun
+	got, err := s.GetSyncRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetSyncRun: %v", err)
+	}
+	if got.Scope != "team" {
+		t.Errorf("scope: got %q, want %q", got.Scope, "team")
+	}
+
+	// UpdateSyncRun (done)
+	if err := s.UpdateSyncRun(ctx, run.ID, "done", sql.NullString{}); err != nil {
+		t.Fatalf("UpdateSyncRun (done): %v", err)
+	}
+	got2, _ := s.GetSyncRun(ctx, run.ID)
+	if got2.Status != "done" {
+		t.Errorf("status after update: got %q, want %q", got2.Status, "done")
+	}
+	if !got2.FinishedAt.Valid {
+		t.Error("expected finished_at to be set after update")
+	}
+
+	// UpdateSyncRun (error with message)
+	if err := s.UpdateSyncRun(ctx, orgRun.ID, "error", sql.NullString{String: "connection refused", Valid: true}); err != nil {
+		t.Fatalf("UpdateSyncRun (error): %v", err)
+	}
+	got3, _ := s.GetSyncRun(ctx, orgRun.ID)
+	if got3.Status != "error" {
+		t.Errorf("status: got %q, want %q", got3.Status, "error")
+	}
+	if !got3.Error.Valid || got3.Error.String != "connection refused" {
+		t.Errorf("error field: got %v", got3.Error)
+	}
+}
+
+func TestUpdateSyncRun_NotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	err := s.UpdateSyncRun(ctx, 999, "done", sql.NullString{})
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+// ---- Sprint Meta ----
+
+func TestSprintMetaCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	team, err := s.CreateTeam(ctx, "Epsilon")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+
+	// GetSprintMeta (miss)
+	_, err = s.GetSprintMeta(ctx, team.ID, "current")
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows on miss, got %v", err)
+	}
+
+	// UpsertSprintMeta (insert)
+	sm, err := s.UpsertSprintMeta(ctx, team.ID, "current",
+		sql.NullInt64{Int64: 42, Valid: true},
+		sql.NullString{String: "2026-03-01", Valid: true},
+		sql.NullString{String: "2026-03-14", Valid: true},
+		sql.NullString{String: "raw content here", Valid: true},
+	)
+	if err != nil {
+		t.Fatalf("UpsertSprintMeta: %v", err)
+	}
+	if sm.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if sm.TeamID != team.ID {
+		t.Errorf("team_id: got %d, want %d", sm.TeamID, team.ID)
+	}
+	if sm.PlanType != "current" {
+		t.Errorf("plan_type: got %q, want %q", sm.PlanType, "current")
+	}
+	if !sm.SprintNumber.Valid || sm.SprintNumber.Int64 != 42 {
+		t.Errorf("sprint_number: got %v", sm.SprintNumber)
+	}
+
+	// UpsertSprintMeta (update on conflict)
+	sm2, err := s.UpsertSprintMeta(ctx, team.ID, "current",
+		sql.NullInt64{Int64: 43, Valid: true},
+		sql.NullString{String: "2026-03-15", Valid: true},
+		sql.NullString{String: "2026-03-28", Valid: true},
+		sql.NullString{String: "new raw content", Valid: true},
+	)
+	if err != nil {
+		t.Fatalf("UpsertSprintMeta (update): %v", err)
+	}
+	if sm2.ID != sm.ID {
+		t.Errorf("upsert should return same ID: got %d, want %d", sm2.ID, sm.ID)
+	}
+	if sm2.SprintNumber.Int64 != 43 {
+		t.Errorf("sprint_number after update: got %d, want 43", sm2.SprintNumber.Int64)
+	}
+
+	// UpsertSprintMeta (next plan)
+	next, err := s.UpsertSprintMeta(ctx, team.ID, "next",
+		sql.NullInt64{},
+		sql.NullString{},
+		sql.NullString{},
+		sql.NullString{String: "next sprint raw", Valid: true},
+	)
+	if err != nil {
+		t.Fatalf("UpsertSprintMeta (next): %v", err)
+	}
+	if next.PlanType != "next" {
+		t.Errorf("plan_type: got %q, want %q", next.PlanType, "next")
+	}
+	if next.SprintNumber.Valid {
+		t.Error("expected sprint_number to be NULL")
+	}
+
+	// GetSprintMeta
+	got, err := s.GetSprintMeta(ctx, team.ID, "current")
+	if err != nil {
+		t.Fatalf("GetSprintMeta: %v", err)
+	}
+	if got.ID != sm.ID {
+		t.Errorf("id mismatch: got %d, want %d", got.ID, sm.ID)
+	}
+}
+
+// ---- Refresh Tokens ----
+
+func TestRefreshTokenCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	user, err := s.CreateUser(ctx, "zeta", "hash", "view")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	expiry := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
+
+	// CreateRefreshToken
+	tok, err := s.CreateRefreshToken(ctx, user.ID, "sha256hashvalue1", expiry)
+	if err != nil {
+		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+	if tok.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if tok.UserID != user.ID {
+		t.Errorf("user_id: got %d, want %d", tok.UserID, user.ID)
+	}
+	if tok.TokenHash != "sha256hashvalue1" {
+		t.Errorf("token_hash: got %q, want %q", tok.TokenHash, "sha256hashvalue1")
+	}
+
+	// GetRefreshTokenByHash
+	got, err := s.GetRefreshTokenByHash(ctx, "sha256hashvalue1")
+	if err != nil {
+		t.Fatalf("GetRefreshTokenByHash: %v", err)
+	}
+	if got.ID != tok.ID {
+		t.Errorf("id mismatch: got %d, want %d", got.ID, tok.ID)
+	}
+
+	// GetRefreshTokenByHash (miss)
+	_, err = s.GetRefreshTokenByHash(ctx, "nonexistent")
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows, got %v", err)
+	}
+
+	// CreateRefreshToken (second token)
+	tok2, err := s.CreateRefreshToken(ctx, user.ID, "sha256hashvalue2", expiry)
+	if err != nil {
+		t.Fatalf("CreateRefreshToken (second): %v", err)
+	}
+
+	// DeleteRefreshToken
+	if err := s.DeleteRefreshToken(ctx, tok.ID); err != nil {
+		t.Fatalf("DeleteRefreshToken: %v", err)
+	}
+	_, err = s.GetRefreshTokenByHash(ctx, "sha256hashvalue1")
+	if err != sql.ErrNoRows {
+		t.Errorf("after delete: expected sql.ErrNoRows, got %v", err)
+	}
+
+	// DeleteExpiredRefreshTokens (tok2 not expired yet - should survive)
+	if err := s.DeleteExpiredRefreshTokens(ctx); err != nil {
+		t.Fatalf("DeleteExpiredRefreshTokens: %v", err)
+	}
+	_, err = s.GetRefreshTokenByHash(ctx, "sha256hashvalue2")
+	if err != nil {
+		t.Errorf("non-expired token should still exist: %v", err)
+	}
+
+	// Create an already-expired token and prune it
+	pastExpiry := time.Now().Add(-time.Hour)
+	_, err = s.CreateRefreshToken(ctx, user.ID, "expiredtoken", pastExpiry)
+	if err != nil {
+		t.Fatalf("CreateRefreshToken (expired): %v", err)
+	}
+	if err := s.DeleteExpiredRefreshTokens(ctx); err != nil {
+		t.Fatalf("DeleteExpiredRefreshTokens (expired): %v", err)
+	}
+	_, err = s.GetRefreshTokenByHash(ctx, "expiredtoken")
+	if err != sql.ErrNoRows {
+		t.Errorf("expired token should be deleted, got %v", err)
+	}
+	// tok2 still present
+	_, err = s.GetRefreshTokenByHash(ctx, "sha256hashvalue2")
+	if err != nil {
+		t.Errorf("tok2 should still exist after prune: %v", err)
+	}
+	_ = tok2
 }
