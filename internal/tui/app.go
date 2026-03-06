@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/your-org/dashboard/internal/tui/client"
+	"github.com/your-org/dashboard/internal/tui/components"
 	"github.com/your-org/dashboard/internal/tui/views"
 )
 
@@ -12,11 +13,22 @@ import (
 // The App will push a new LoginView on top of the current stack.
 type ShowLoginMsg struct{}
 
-// SyncDoneMsg is sent by SyncPoller when a sync run finishes.
+// SyncStartedMsg is sent by a view when it successfully starts a sync run.
+// App will show the banner and begin polling for completion.
+type SyncStartedMsg struct {
+	RunID int64
+	Label string // e.g. team name or "org"
+}
+
+// SyncDoneMsg is sent by SyncPoller when a sync run finishes successfully.
 type SyncDoneMsg struct {
-	RunID  int64
-	Status string
-	Err    string
+	RunID int64
+}
+
+// SyncFailedMsg is sent by SyncPoller when a sync run fails.
+type SyncFailedMsg struct {
+	RunID int64
+	Err   string
 }
 
 // syncPollMsg is an internal message that triggers the next poll tick.
@@ -35,14 +47,17 @@ func (p *SyncPoller) Poll(runID int64) tea.Cmd {
 		time.Sleep(2 * time.Second)
 		run, err := p.client.GetSyncRun(runID)
 		if err != nil {
-			return SyncDoneMsg{RunID: runID, Err: err.Error()}
+			return SyncFailedMsg{RunID: runID, Err: err.Error()}
 		}
-		if run.Status == "done" || run.Status == "error" {
+		if run.Status == "done" {
+			return SyncDoneMsg{RunID: runID}
+		}
+		if run.Status == "error" {
 			errDetail := ""
 			if run.Error != nil {
 				errDetail = *run.Error
 			}
-			return SyncDoneMsg{RunID: runID, Status: run.Status, Err: errDetail}
+			return SyncFailedMsg{RunID: runID, Err: errDetail}
 		}
 		return syncPollMsg{RunID: runID}
 	}
@@ -53,6 +68,7 @@ type App struct {
 	views      []tea.Model
 	client     *client.Client
 	syncPoller *SyncPoller
+	banner     components.Banner
 }
 
 // NewApp creates an App with the given client. The views stack starts empty;
@@ -91,6 +107,11 @@ func (a *App) Init() tea.Cmd {
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.KeyMsg:
+		// Let the user dismiss a failed sync banner by pressing Enter.
+		if a.banner.Active && a.banner.Failed && m.String() == "enter" {
+			a.banner = components.Banner{}
+			return a, nil
+		}
 		switch m.String() {
 		case "q", "ctrl+c":
 			// Quit only when at the root of the stack.
@@ -128,6 +149,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.views = append(a.views, lv)
 		return a, lv.Init()
 
+	case SyncStartedMsg:
+		a.banner = components.Banner{Active: true, Label: m.Label}
+		return a, a.syncPoller.Poll(m.RunID)
+
+	case SyncDoneMsg:
+		a.banner = components.Banner{}
+		return a, nil
+
+	case SyncFailedMsg:
+		a.banner = components.Banner{Active: true, Failed: true, FailedMsg: m.Err}
+		return a, nil
+
 	case syncPollMsg:
 		return a, a.syncPoller.Poll(m.RunID)
 	}
@@ -148,5 +181,5 @@ func (a *App) View() string {
 	if len(a.views) == 0 {
 		return ""
 	}
-	return a.views[len(a.views)-1].View()
+	return a.banner.Render() + a.views[len(a.views)-1].View()
 }
