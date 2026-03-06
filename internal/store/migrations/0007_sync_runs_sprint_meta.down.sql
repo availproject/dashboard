@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS sprint_meta;
+DROP TABLE IF EXISTS sync_runs;

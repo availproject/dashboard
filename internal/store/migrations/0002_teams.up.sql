@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS teams (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id      INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL,
+    github_login TEXT,
+    role         TEXT,
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
