@@ -1,4 +1,7 @@
 ## Codebase Patterns
+- `ai_cache.pipeline` has a CHECK constraint: must be one of `sprint_parse`, `concerns`, `goal_extraction`, `workload`, `velocity`, `alignment`, `discovery_suggestion`
+- `ai_cache.team_id` has a FOREIGN KEY constraint to teams table; tests must create a real team before using a team ID
+- Go's `encoding/json` sorts map keys alphabetically automatically — no custom sort needed for canonical JSON
 - All connectors follow the same pattern: `New(credentials...) *Client`, `checkCredentials() error`, `Discover(ctx, target) ([]DiscoveredItem, error)`
 - Connectors return clear errors for missing credentials rather than panicking
 - `connector.DiscoveredItem` is the shared type from `internal/connector/connector.go`
@@ -36,4 +39,16 @@
   - SigNoz uses `SIGNOZ-API-KEY` header (not `Authorization: Bearer`) — check their API docs
   - PostHog pagination: `next` field is an absolute URL; strip the host prefix before reusing as path
   - SigNoz FetchPanel returns the panel's query definition (not executed results) since executing `/api/v3/query_range` requires time range from the caller
+---
+
+## 2026-03-06 - US-014
+- Implemented `CachedGenerator` in `internal/ai/cached_generator.go`
+- `NewCachedGenerator(inner Generator, s *store.Store) *CachedGenerator`
+- `Generate(ctx, pipeline, teamID *int64, inputs map[string]any, annotations []store.Annotation)`: serializes to canonical JSON (Go json.Marshal sorts map keys), SHA-256 hashes for cache key, checks store, on miss calls inner generator and stores result
+- Unit tests in `internal/ai/cached_generator_test.go`: cache hit, cache miss, different inputs → different hashes, teamID affects cache key
+- Files changed: `internal/ai/cached_generator.go`, `internal/ai/cached_generator_test.go`
+- **Learnings for future iterations:**
+  - `ai_cache.pipeline` has a CHECK constraint — use a valid pipeline name in tests (e.g., `concerns`, `workload`)
+  - `ai_cache.team_id` has a FOREIGN KEY to teams — must call `s.CreateTeam` before using a team ID in tests
+  - Go's `encoding/json` sorts map[string]any keys alphabetically automatically — canonical JSON is free
 ---
