@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/your-org/dashboard/internal/tui/client"
-	"github.com/your-org/dashboard/internal/tui/views"
+	"github.com/your-org/dashboard/internal/tui/msgs"
 )
 
 var (
@@ -73,7 +73,7 @@ func (v *ConfigRootView) pushSubView() tea.Cmd {
 	default:
 		return nil
 	}
-	return func() tea.Msg { return views.PushViewMsg{View: subView} }
+	return func() tea.Msg { return msgs.PushViewMsg{View: subView} }
 }
 
 // View implements tea.Model.

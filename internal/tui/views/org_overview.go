@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/your-org/dashboard/internal/tui/client"
+	"github.com/your-org/dashboard/internal/tui/msgs"
+	"github.com/your-org/dashboard/internal/tui/views/config"
 )
 
 // ---- internal message types ----
@@ -125,10 +127,13 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				team := v.data.Teams[v.cursor]
 				tv := NewTeamView(v.c, team.ID, team.Name)
 				return v, func() tea.Msg {
-					return PushViewMsg{View: tv}
+					return msgs.PushViewMsg{View: tv}
 				}
 			}
 			return v, nil
+		case "c":
+			cv := config.NewConfigRootView(v.c)
+			return v, func() tea.Msg { return msgs.PushViewMsg{View: cv} }
 		case "R":
 			if !v.syncing {
 				v.syncing = true
@@ -236,7 +241,7 @@ func (v *OrgOverviewView) footer() string {
 	if v.data != nil && v.data.LastSyncedAt != nil {
 		lastSync = "Last synced: " + *v.data.LastSyncedAt
 	}
-	return "\n" + dimStyle.Render("  "+lastSync+"  ·  j/k navigate  ·  Enter to drill in  ·  R to sync org  ·  q to quit") + "\n"
+	return "\n" + dimStyle.Render("  "+lastSync+"  ·  j/k navigate  ·  Enter to drill in  ·  R to sync org  ·  c config  ·  q to quit") + "\n"
 }
 
 func renderRisk(level string) string {
@@ -252,6 +257,5 @@ func renderRisk(level string) string {
 	}
 }
 
-// PushViewMsg is sent by any view to push a new view onto the App stack.
-// Defined here to avoid an import cycle (tui imports views).
-type PushViewMsg struct{ View tea.Model }
+// PushViewMsg is an alias kept for backward compatibility; use msgs.PushViewMsg directly.
+type PushViewMsg = msgs.PushViewMsg

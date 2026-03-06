@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/your-org/dashboard/internal/tui/client"
-	"github.com/your-org/dashboard/internal/tui/views"
+	"github.com/your-org/dashboard/internal/tui/msgs"
 )
 
 // ---- internal message types ----
@@ -149,13 +149,14 @@ func (v *ConfigSourcesView) pushTagView() tea.Cmd {
 	}
 	item := filtered[v.cursor]
 	tv := newConfigTagView(v.c, item, v.teams)
-	return func() tea.Msg { return views.PushViewMsg{View: tv} }
+	return func() tea.Msg { return msgs.PushViewMsg{View: tv} }
 }
 
 func (v *ConfigSourcesView) pushDiscoverPrompt() tea.Cmd {
 	dv := newConfigDiscoverView(v.c)
-	return func() tea.Msg { return views.PushViewMsg{View: dv} }
+	return func() tea.Msg { return msgs.PushViewMsg{View: dv} }
 }
+
 
 // View implements tea.Model.
 func (v *ConfigSourcesView) View() string {
@@ -254,14 +255,14 @@ func (v *configTagView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			v.saved = true
 			// pop this view after save
-			return v, func() tea.Msg { return views.PopViewMsg{} }
+			return v, func() tea.Msg { return msgs.PopViewMsg{} }
 		}
 		return v, nil
 
 	case tea.KeyMsg:
 		switch m.String() {
 		case "esc":
-			return v, func() tea.Msg { return views.PopViewMsg{} }
+			return v, func() tea.Msg { return msgs.PopViewMsg{} }
 		case "tab":
 			// cycle team assignment
 			v.teamIdx = (v.teamIdx + 1) % (len(v.teams) + 1)
@@ -361,14 +362,14 @@ func (v *configDiscoverView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.err != nil {
 			v.errMsg = m.err.Error()
 		} else {
-			return v, func() tea.Msg { return views.PopViewMsg{} }
+			return v, func() tea.Msg { return msgs.PopViewMsg{} }
 		}
 		return v, nil
 
 	case tea.KeyMsg:
 		switch m.String() {
 		case "esc":
-			return v, func() tea.Msg { return views.PopViewMsg{} }
+			return v, func() tea.Msg { return msgs.PopViewMsg{} }
 		case "tab":
 			if v.scope == "org" {
 				v.scope = "team"

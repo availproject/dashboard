@@ -6,10 +6,11 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/your-org/dashboard/internal/tui/client"
+	"github.com/your-org/dashboard/internal/tui/msgs"
 )
 
-// PopViewMsg is sent to pop the current view from the App stack.
-type PopViewMsg struct{}
+// PopViewMsg is an alias kept for backward compatibility; use msgs.PopViewMsg directly.
+type PopViewMsg = msgs.PopViewMsg
 
 // annotateSubmitMsg is sent when the annotation POST completes.
 type annotateSubmitMsg struct{ err error }

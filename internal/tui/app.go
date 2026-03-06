@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/your-org/dashboard/internal/tui/client"
 	"github.com/your-org/dashboard/internal/tui/components"
+	"github.com/your-org/dashboard/internal/tui/msgs"
 	"github.com/your-org/dashboard/internal/tui/views"
 )
 
@@ -125,11 +126,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case views.PushViewMsg:
+	case msgs.PushViewMsg:
 		a.views = append(a.views, m.View)
 		return a, m.View.Init()
 
-	case views.PopViewMsg:
+	case msgs.PopViewMsg:
 		if len(a.views) > 1 {
 			a.views = a.views[:len(a.views)-1]
 		}
