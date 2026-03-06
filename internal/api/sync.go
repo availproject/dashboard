@@ -32,7 +32,7 @@ func (d *Deps) handlePostSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := d.Store.GetRunningSyncRun(r.Context(), body.Scope, nullTeamID); err == nil {
-		writeError(w, http.StatusConflict, "sync already running")
+		writeError(w, http.StatusConflict, "sync already running for this scope")
 		return
 	}
 

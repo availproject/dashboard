@@ -84,7 +84,11 @@ func (v *SprintView) View() string {
 		return sb.String()
 	}
 
-	sb.WriteString(fmt.Sprintf("  Week %d of %d\n\n", v.data.CurrentSprint, v.data.TotalSprints))
+	totalStr := fmt.Sprintf("%d", v.data.TotalSprints)
+	if v.data.TotalSprints > 4 {
+		totalStr = warningAmberStyle.Render(totalStr)
+	}
+	sb.WriteString(fmt.Sprintf("  Week %d of %s\n\n", v.data.CurrentSprint, totalStr))
 
 	if v.data.StartDateMissing {
 		sb.WriteString(warningAmberStyle.Render("  ⚠  Sprint start date not found. Add it to the plan document or annotate it in Config.") + "\n\n")

@@ -107,8 +107,9 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := teamSprintResponse{
-		PlanType: "current",
-		Goals:    []string{},
+		PlanType:         "current",
+		Goals:            []string{},
+		StartDateMissing: true, // default true; cleared when a valid start_date is found
 	}
 
 	// Load sprint_meta for plan_type="current"
@@ -117,8 +118,7 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 		resp.PlanType = sprintMeta.PlanType
 		if sprintMeta.StartDate.Valid {
 			resp.StartDate = &sprintMeta.StartDate.String
-		} else {
-			resp.StartDateMissing = true
+			resp.StartDateMissing = false
 		}
 	}
 
@@ -142,14 +142,13 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 					if resp.CurrentSprint < 1 {
 						resp.CurrentSprint = 1
 					}
+					resp.StartDateMissing = false
 				} else {
 					resp.CurrentSprint = sp.CurrentSprint
 				}
 			} else {
 				resp.CurrentSprint = sp.CurrentSprint
-				if resp.StartDate == nil {
-					resp.StartDateMissing = true
-				}
+				// StartDateMissing already defaults to true; leave it
 			}
 		}
 	}

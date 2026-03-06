@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -17,6 +18,9 @@ import (
 func TestRunSprintParseIntegration(t *testing.T) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Skip("claude binary not found in PATH; skipping integration test")
+	}
+	if os.Getenv("CLAUDECODE") != "" {
+		t.Skip("inside a Claude Code session; skipping integration test to avoid nested session")
 	}
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
