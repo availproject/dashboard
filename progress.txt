@@ -13,6 +13,19 @@
 
 ---
 
+## 2026-03-06 - US-013
+- Implemented `Generator` interface in `internal/ai/generator.go`
+- Implemented `AnthropicProvider` in `internal/ai/anthropic.go`: posts to Anthropic REST API, respects `ANTHROPIC_API_KEY` env override
+- Implemented `ClaudeCodeProvider` in `internal/ai/claude_code.go`: runs claude CLI subprocess, streams stdout line-by-line, collects text from `result` and `content_block_delta` events
+- Implemented `New(cfg config.AIConfig) (Generator, error)` factory in `internal/ai/factory.go`
+- Files changed: `internal/ai/generator.go`, `internal/ai/anthropic.go`, `internal/ai/claude_code.go`, `internal/ai/factory.go`
+- **Learnings for future iterations:**
+  - `content_block_delta` stream-json events have `delta.text` at the top level (not nested under `content`)
+  - `result` stream-json events carry the full response as a top-level `result` string field
+  - `ANTHROPIC_API_KEY` env var overrides config api_key in AnthropicProvider
+
+---
+
 ## 2026-03-06 - US-012
 - Implemented Grafana connector: `New`, `Discover` (extracts UID from URL, fetches dashboard panels), `FetchPanel` (re-fetches dashboard for targets, POSTs to `/api/ds/query`)
 - Implemented PostHog connector: `New`, `Discover` (paginates `/api/projects/:id/dashboards/`, one item per insight tile), `FetchInsight` (GET `/api/projects/:id/insights/:id/`)
