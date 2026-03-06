@@ -1,0 +1,14 @@
+# Local config and credentials
+config.yaml
+.env
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Binaries
+bin/
+tui
+
+# Misc
