@@ -1,3 +1,17 @@
+## 2026-03-06 - US-036
+- Added PostConfigTeam/PutConfigTeam/DeleteConfigTeam/PostConfigMember/PutConfigMember/DeleteConfigMember to `internal/tui/client/client.go` with TeamConfigResponse and MemberConfigResponse types
+- Created `internal/tui/views/config/config_root.go`: ConfigRootView sub-menu with 5 items; Teams & Members and Sources are wired; others return nil (stubs)
+- Created `internal/tui/views/config/config_teams.go`: ConfigTeamsView with 7-mode state machine (normal/input-new-team/edit-team/new-member/edit-member/confirm-delete-team/confirm-delete-member); j/k nav, Enter expand, n/e/d CRUD; teamsMutatedMsg reloads teams after any mutation
+- Created `internal/tui/views/config/config_sources.go`: ConfigSourcesView with status filter (f cycles all/active/pending/ignored); Enter pushes configTagView; D pushes configDiscoverView; inline tag view with AI suggestion + team selector (Tab) + purpose input
+- Files changed: `internal/tui/client/client.go`, `internal/tui/views/config/*.go`
+- **Learnings for future iterations:**
+  - Config views are in `internal/tui/views/config/` package (separate from `views`)
+  - Config views still use `views.PushViewMsg` and `views.PopViewMsg` from the `views` package to push/pop views
+  - `cfgSelectedStyle`/`cfgDimStyle` are defined locally in config_root.go and shared via same package
+  - textinput Update needs the full `tea.Msg` passed (not just `tea.KeyMsg`) for character-by-character editing to work
+  - `configTagView` uses `views.PopViewMsg{}` to pop itself after saving
+---
+
 ## 2026-03-06 - US-035
 - Created `internal/tui/components/banner.go`: Banner struct with Active/Label/Failed/FailedMsg fields; Render() prepends banner to view output; in-progress=yellow, failed=red bold + "Press Enter to dismiss"
 - Updated `internal/tui/app.go`: added SyncStartedMsg/SyncFailedMsg types; refactored SyncDoneMsg (now only for success); SyncPoller.Poll() returns SyncFailedMsg on error; App.banner updated on each msg; App.View() prepends banner.Render(); Enter dismisses failed banner
