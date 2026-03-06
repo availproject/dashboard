@@ -201,3 +201,177 @@ func TestUpdateTeam_NotFound(t *testing.T) {
 		t.Errorf("expected sql.ErrNoRows, got %v", err)
 	}
 }
+
+// ---- Source Catalogue ----
+
+func TestCatalogueCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// UpsertCatalogueItem (insert)
+	item, err := s.UpsertCatalogueItem(ctx, "github_repo", "org/repo1", "Repo One",
+		sql.NullString{String: "https://github.com/org/repo1", Valid: true},
+		sql.NullString{})
+	if err != nil {
+		t.Fatalf("UpsertCatalogueItem: %v", err)
+	}
+	if item.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if item.SourceType != "github_repo" {
+		t.Errorf("source_type: got %q, want %q", item.SourceType, "github_repo")
+	}
+	if item.Status != "untagged" {
+		t.Errorf("status default: got %q, want %q", item.Status, "untagged")
+	}
+
+	// UpsertCatalogueItem (update on conflict)
+	item2, err := s.UpsertCatalogueItem(ctx, "github_repo", "org/repo1", "Repo One Updated",
+		sql.NullString{String: "https://github.com/org/repo1", Valid: true},
+		sql.NullString{})
+	if err != nil {
+		t.Fatalf("UpsertCatalogueItem (update): %v", err)
+	}
+	if item2.ID != item.ID {
+		t.Errorf("upsert should return same ID: got %d, want %d", item2.ID, item.ID)
+	}
+	if item2.Title != "Repo One Updated" {
+		t.Errorf("title after upsert: got %q, want %q", item2.Title, "Repo One Updated")
+	}
+
+	// GetCatalogueItem
+	got, err := s.GetCatalogueItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("GetCatalogueItem: %v", err)
+	}
+	if got.Title != "Repo One Updated" {
+		t.Errorf("GetCatalogueItem title: got %q", got.Title)
+	}
+
+	// ListCatalogue
+	_, _ = s.UpsertCatalogueItem(ctx, "notion_page", "page-abc", "Page ABC",
+		sql.NullString{}, sql.NullString{})
+	items, err := s.ListCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("ListCatalogue: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("ListCatalogue: got %d items, want 2", len(items))
+	}
+
+	// UpdateCatalogueStatus
+	if err := s.UpdateCatalogueStatus(ctx, item.ID, "configured"); err != nil {
+		t.Fatalf("UpdateCatalogueStatus: %v", err)
+	}
+	got2, _ := s.GetCatalogueItem(ctx, item.ID)
+	if got2.Status != "configured" {
+		t.Errorf("status after update: got %q, want %q", got2.Status, "configured")
+	}
+
+	// UpdateCatalogueAISuggestion
+	if err := s.UpdateCatalogueAISuggestion(ctx, item.ID, "current_plan"); err != nil {
+		t.Fatalf("UpdateCatalogueAISuggestion: %v", err)
+	}
+	got3, _ := s.GetCatalogueItem(ctx, item.ID)
+	if !got3.AISuggestion.Valid || got3.AISuggestion.String != "current_plan" {
+		t.Errorf("ai_suggestion after update: got %v", got3.AISuggestion)
+	}
+}
+
+func TestUpdateCatalogueStatus_NotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	err := s.UpdateCatalogueStatus(ctx, 999, "ignored")
+	if err != sql.ErrNoRows {
+		t.Errorf("expected sql.ErrNoRows, got %v", err)
+	}
+}
+
+// ---- Source Configs ----
+
+func TestSourceConfigCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Need a catalogue item and a team first.
+	item, err := s.UpsertCatalogueItem(ctx, "notion_page", "page-1", "Sprint Plan",
+		sql.NullString{}, sql.NullString{})
+	if err != nil {
+		t.Fatalf("UpsertCatalogueItem: %v", err)
+	}
+	team, err := s.CreateTeam(ctx, "Alpha")
+	if err != nil {
+		t.Fatalf("CreateTeam: %v", err)
+	}
+
+	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
+
+	// UpsertSourceConfig (insert)
+	sc, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan")
+	if err != nil {
+		t.Fatalf("UpsertSourceConfig: %v", err)
+	}
+	if sc.ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	if sc.CatalogueID != item.ID {
+		t.Errorf("catalogue_id: got %d, want %d", sc.CatalogueID, item.ID)
+	}
+	if sc.Purpose != "current_plan" {
+		t.Errorf("purpose: got %q, want %q", sc.Purpose, "current_plan")
+	}
+
+	// UpsertSourceConfig (idempotent - returns existing)
+	sc2, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan")
+	if err != nil {
+		t.Fatalf("UpsertSourceConfig (idempotent): %v", err)
+	}
+	if sc2.ID != sc.ID {
+		t.Errorf("idempotent upsert returned different ID: got %d, want %d", sc2.ID, sc.ID)
+	}
+
+	// UpsertSourceConfig (org-level, team_id IS NULL)
+	orgConfig, err := s.UpsertSourceConfig(ctx, item.ID, sql.NullInt64{}, "org_goals")
+	if err != nil {
+		t.Fatalf("UpsertSourceConfig (org): %v", err)
+	}
+	if orgConfig.TeamID.Valid {
+		t.Error("expected team_id to be NULL for org config")
+	}
+
+	// ListSourceConfigs
+	configs, err := s.ListSourceConfigs(ctx)
+	if err != nil {
+		t.Fatalf("ListSourceConfigs: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Errorf("ListSourceConfigs: got %d configs, want 2", len(configs))
+	}
+
+	// GetSourceConfigsForScope (team)
+	teamConfigs, err := s.GetSourceConfigsForScope(ctx, teamID)
+	if err != nil {
+		t.Fatalf("GetSourceConfigsForScope (team): %v", err)
+	}
+	if len(teamConfigs) != 1 {
+		t.Errorf("GetSourceConfigsForScope (team): got %d, want 1", len(teamConfigs))
+	}
+
+	// GetSourceConfigsForScope (org)
+	orgConfigs, err := s.GetSourceConfigsForScope(ctx, sql.NullInt64{})
+	if err != nil {
+		t.Fatalf("GetSourceConfigsForScope (org): %v", err)
+	}
+	if len(orgConfigs) != 1 {
+		t.Errorf("GetSourceConfigsForScope (org): got %d, want 1", len(orgConfigs))
+	}
+
+	// DeleteSourceConfig
+	if err := s.DeleteSourceConfig(ctx, sc.ID); err != nil {
+		t.Fatalf("DeleteSourceConfig: %v", err)
+	}
+	configs, _ = s.ListSourceConfigs(ctx)
+	if len(configs) != 1 {
+		t.Errorf("after DeleteSourceConfig: got %d configs, want 1", len(configs))
+	}
+}
