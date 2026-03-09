@@ -228,6 +228,8 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	}
 	go func() { wg.Wait(); close(results) }()
 
+	// sprint_doc(current) takes priority over current_plan.
+	var currentPlanFallback string
 	for r := range results {
 		key := fmt.Sprintf("%s:%s", r.item.SourceType, r.item.ExternalID)
 		if r.err != nil {
@@ -237,7 +239,7 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 		_ = e.store.TouchCatalogueItem(ctx, r.item.ID)
 		switch r.cfg.Purpose {
 		case "current_plan":
-			td.currentPlanText = r.content
+			currentPlanFallback = r.content
 		case "sprint_doc":
 			meta := parseJSONMeta(r.cfg.ConfigMeta)
 			if status, _ := meta["sprint_status"].(string); status == "current" {
@@ -246,6 +248,9 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 		case "goals", "goals_doc":
 			td.goalsDocText = r.content
 		}
+	}
+	if td.currentPlanText == "" && currentPlanFallback != "" {
+		td.currentPlanText = currentPlanFallback
 	}
 
 	log.Printf("INFO  sync [team %d]: content fetch done in %s", teamID, time.Since(fetchStart).Round(time.Millisecond))

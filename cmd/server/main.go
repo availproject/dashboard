@@ -120,11 +120,11 @@ func main() {
 	// WaitGroup to track in-progress background goroutines (autotag ticker, HTTP server).
 	var wg sync.WaitGroup
 
-	// AutoTag ticker: runs every 12 hours.
+	// AutoTag ticker: runs every hour.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(12 * time.Hour)
+		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		for {
 			select {

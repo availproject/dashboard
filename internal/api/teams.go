@@ -68,6 +68,15 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseTeamID extracts and parses the {id} URL parameter.
+func parseConfigMeta(meta sql.NullString) map[string]any {
+	if !meta.Valid || meta.String == "" {
+		return map[string]any{}
+	}
+	var m map[string]any
+	_ = json.Unmarshal([]byte(meta.String), &m)
+	return m
+}
+
 func parseTeamID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 }
@@ -87,14 +96,16 @@ func (d *Deps) teamLastSyncedAt(r *http.Request, teamID int64) *string {
 // --- GET /teams/{id}/sprint ---
 
 type teamSprintResponse struct {
-	PlanType           string   `json:"plan_type"`
-	StartDate          *string  `json:"start_date"`
-	CurrentSprint      int      `json:"current_sprint"`
-	TotalSprints       int      `json:"total_sprints"`
-	StartDateMissing   bool     `json:"start_date_missing"`
-	NextPlanStartRisk  bool     `json:"next_plan_start_risk"`
-	Goals              []string `json:"goals"`
-	LastSyncedAt       *string  `json:"last_synced_at"`
+	PlanType          string   `json:"plan_type"`
+	PlanTitle         string   `json:"plan_title"`
+	PlanURL           string   `json:"plan_url"`
+	StartDate         *string  `json:"start_date"`
+	CurrentSprint     int      `json:"current_sprint"`
+	TotalSprints      int      `json:"total_sprints"`
+	StartDateMissing  bool     `json:"start_date_missing"`
+	NextPlanStartRisk bool     `json:"next_plan_start_risk"`
+	Goals             []string `json:"goals"`
+	LastSyncedAt      *string  `json:"last_synced_at"`
 }
 
 func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
@@ -109,20 +120,21 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 	resp := teamSprintResponse{
 		PlanType:         "current",
 		Goals:            []string{},
-		StartDateMissing: true, // default true; cleared when a valid start_date is found
+		StartDateMissing: true, // default true; cleared below when position is determined
 	}
 
-	// Load sprint_meta for plan_type="current"
+	// Load sprint_meta (written by homepage extraction — carries start/end dates).
+	var sprintMetaStartDate string
 	sprintMeta, err := d.Store.GetSprintMeta(ctx, teamID, "current")
 	if err == nil {
 		resp.PlanType = sprintMeta.PlanType
-		if sprintMeta.StartDate.Valid {
-			resp.StartDate = &sprintMeta.StartDate.String
-			resp.StartDateMissing = false
+		if sprintMeta.StartDate.Valid && sprintMeta.StartDate.String != "" {
+			sprintMetaStartDate = sprintMeta.StartDate.String
 		}
 	}
 
-	// Load sprint_parse pipeline cache for total_sprints, current_sprint, goals
+	// Load sprint_parse cache (written by sync — carries total_sprints, goals, and
+	// optionally a start_date extracted directly from the sprint plan document).
 	teamNullID := sql.NullInt64{Int64: teamID, Valid: true}
 	sprintCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.SprintParsePipeline, teamNullID)
 	if err == nil {
@@ -133,26 +145,62 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 				resp.Goals = sp.Goals
 			}
 
-			// Compute current_sprint from start_date if available; fall back to AI count.
-			if sp.StartDate != nil && *sp.StartDate != "" {
-				t, parseErr := time.Parse("2006-01-02", *sp.StartDate)
-				if parseErr == nil {
+			// Determine plan start date: prefer what homepage extraction stored in
+			// sprint_meta (authoritative — derived from the homepage which declares
+			// when each sprint starts). Fall back to a date extracted from the sprint
+			// plan document itself only when the homepage did not provide one.
+			planStart := sprintMetaStartDate
+			if planStart == "" && sp.StartDate != nil && *sp.StartDate != "" {
+				planStart = *sp.StartDate
+			}
+
+			if planStart != "" {
+				// Compute which sprint week we are in based on elapsed calendar time.
+				resp.StartDate = &planStart
+				if t, parseErr := time.Parse("2006-01-02", planStart); parseErr == nil {
 					daysElapsed := time.Since(t).Hours() / 24
 					resp.CurrentSprint = int(math.Floor(daysElapsed/7)) + 1
 					if resp.CurrentSprint < 1 {
 						resp.CurrentSprint = 1
 					}
 					resp.StartDateMissing = false
-				} else {
-					resp.CurrentSprint = sp.CurrentSprint
 				}
-			} else {
-				resp.CurrentSprint = sp.CurrentSprint
 			}
-			// If the AI successfully identified a sprint number, suppress the missing-date
-			// warning — teams that track sprints by number don't need calendar dates.
-			if sp.CurrentSprint > 0 {
-				resp.StartDateMissing = false
+		}
+	}
+
+	// No dates and no AI-identified sprint — default to sprint 1.
+	// This is a reasonable assumption at the start of a new plan; clear the warning
+	// since the position is inferred, not missing. Users can add a start date to the
+	// plan doc if they want accurate per-week tracking.
+	if resp.CurrentSprint < 1 && resp.TotalSprints > 0 {
+		resp.CurrentSprint = 1
+		resp.StartDateMissing = false
+	}
+
+	// Look up the active sprint doc title and URL (sprint_doc(current) preferred, else current_plan).
+	configs, cerr := d.Store.GetConfigsByPurpose(ctx, teamNullID, "sprint_doc")
+	if cerr == nil {
+		for _, sc := range configs {
+			meta := parseConfigMeta(sc.ConfigMeta)
+			if status, _ := meta["sprint_status"].(string); status == "current" {
+				if item, err := d.Store.GetCatalogueItem(ctx, sc.CatalogueID); err == nil {
+					resp.PlanTitle = item.Title
+					if item.URL.Valid {
+						resp.PlanURL = item.URL.String
+					}
+				}
+				break
+			}
+		}
+	}
+	if resp.PlanTitle == "" {
+		if sc, err := d.Store.FindCurrentPlanForTeam(ctx, teamID); err == nil {
+			if item, err := d.Store.GetCatalogueItem(ctx, sc.CatalogueID); err == nil {
+				resp.PlanTitle = item.Title
+				if item.URL.Valid {
+					resp.PlanURL = item.URL.String
+				}
 			}
 		}
 	}

@@ -69,6 +69,18 @@ func (v *ConfigMultiSlotView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, nil
 
+	case multiSlotLoadedMsg:
+		if m.err != nil {
+			v.errMsg = m.err.Error()
+		} else {
+			v.errMsg = ""
+			v.items = m.items
+			if v.cursor >= len(v.items) && v.cursor > 0 {
+				v.cursor = len(v.items) - 1
+			}
+		}
+		return v, nil
+
 	case itemRemovedMsg:
 		if m.err != nil {
 			v.errMsg = m.err.Error()
@@ -118,8 +130,14 @@ func (v *ConfigMultiSlotView) addItem(item client.SourceItemResponse) tea.Cmd {
 	purpose := v.purpose
 	teamID := v.teamID
 	return func() tea.Msg {
-		err := c.PutConfigSource(item.ID, "configured", &teamID, purpose, "")
-		return itemRemovedMsg{err: err}
+		if err := c.PutConfigSource(item.ID, "configured", &teamID, purpose, ""); err != nil {
+			return multiSlotLoadedMsg{err: err}
+		}
+		cfg, err := c.GetTeamConfig(teamID)
+		if err != nil {
+			return multiSlotLoadedMsg{err: err}
+		}
+		return multiSlotLoadedMsg{items: cfg.Slots[purpose]}
 	}
 }
 

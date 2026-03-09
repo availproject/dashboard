@@ -12,7 +12,7 @@ import (
 
 var sectionHeadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Underline(true)
 
-// ---- sync message types ----
+// ---- sync / autotag message types ----
 
 type reportSyncStartedMsg struct {
 	runID int64
@@ -25,6 +25,13 @@ type reportSyncDoneMsg struct {
 	status string
 	errMsg string
 }
+
+type autotagStartedMsg struct {
+	runID int64
+	err   error
+}
+type autotagPollMsg struct{ runID int64 }
+type autotagDoneMsg struct{ err error }
 
 // TeamReportView shows all team sections in a single scrollable page.
 type TeamReportView struct {
@@ -54,9 +61,10 @@ type TeamReportView struct {
 	height  int
 	width   int
 
-	syncing bool
-	syncMsg string
-	errMsg  string
+	syncing    bool
+	autotagging bool
+	syncMsg    string
+	errMsg     string
 }
 
 // NewTeamView creates a TeamReportView for the given team.
@@ -98,6 +106,31 @@ func (v *TeamReportView) Init() tea.Cmd {
 			return metricsLoadedMsg{data: data, err: err}
 		},
 	)
+}
+
+func doAutotag(c *client.Client) tea.Cmd {
+	return func() tea.Msg {
+		runID, err := c.PostAutotag()
+		return autotagStartedMsg{runID: runID, err: err}
+	}
+}
+
+func pollAutotag(c *client.Client, runID int64) tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(3 * time.Second)
+		run, err := c.GetSyncRun(runID)
+		if err != nil {
+			return autotagDoneMsg{err: err}
+		}
+		if run.Status == "done" || run.Status == "error" {
+			var runErr error
+			if run.Error != nil {
+				runErr = fmt.Errorf("%s", *run.Error)
+			}
+			return autotagDoneMsg{err: runErr}
+		}
+		return autotagPollMsg{runID: runID}
+	}
 }
 
 func doReportSync(c *client.Client, teamID int64) tea.Cmd {
@@ -213,6 +246,26 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, v.reload()
 
+	case autotagStartedMsg:
+		if m.err != nil {
+			v.autotagging = false
+			v.syncMsg = "Tag GitHub tasks failed: " + m.err.Error()
+			return v, nil
+		}
+		return v, pollAutotag(v.c, m.runID)
+
+	case autotagPollMsg:
+		return v, pollAutotag(v.c, m.runID)
+
+	case autotagDoneMsg:
+		v.autotagging = false
+		if m.err != nil {
+			v.syncMsg = "Tag GitHub tasks failed: " + m.err.Error()
+		} else {
+			v.syncMsg = "Tagging done — press r to sync."
+		}
+		return v, nil
+
 	case tea.KeyMsg:
 		switch m.String() {
 		case "j", "down":
@@ -232,10 +285,17 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return v, nil
 		case "r":
-			if !v.syncing {
+			if !v.syncing && !v.autotagging {
 				v.syncing = true
 				v.syncMsg = "Syncing team…"
 				return v, doReportSync(v.c, v.teamID)
+			}
+			return v, nil
+		case "t":
+			if !v.autotagging && !v.syncing {
+				v.autotagging = true
+				v.syncMsg = "Tagging GitHub tasks…"
+				return v, doAutotag(v.c)
 			}
 			return v, nil
 		case "a":
@@ -331,7 +391,7 @@ func (v *TeamReportView) View() string {
 		scrollIndicator = "  " + dimStyle.Render(fmt.Sprintf("%d%%", pct))
 	}
 
-	footer := "\n" + dimStyle.Render("  j/k scroll  ·  d/u page  ·  r sync  ·  a annotate  ·  Esc back") + scrollIndicator + "\n"
+	footer := "\n" + dimStyle.Render("  j/k scroll  ·  d/u page  ·  r sync  ·  t tag tasks  ·  a annotate  ·  Esc back") + scrollIndicator + "\n"
 	return visible + footer
 }
 
@@ -412,6 +472,10 @@ func (v *TeamReportView) renderContent() string {
 			header := fmt.Sprintf("  Week %d of %s", v.sprint.CurrentSprint, totalStr)
 			if end := v.sprintEndDate(); end != "" {
 				header += dimStyle.Render(" · ends "+end)
+			}
+			if v.sprint.PlanTitle != "" {
+				planStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
+				header += dimStyle.Render("  ·  ") + planStyle.Render(v.sprint.PlanTitle)
 			}
 			sb.WriteString(header + "\n")
 			if v.sprint.StartDateMissing {

@@ -353,7 +353,7 @@ func (c *Client) fetchBlocksText(ctx context.Context, blockID notion.BlockID, de
 				sb.WriteString("\n")
 			}
 
-			if block.GetHasChildren() {
+			if block.GetHasChildren() && blockChildrenUseful(block) {
 				child, err := c.fetchBlocksText(ctx, block.GetID(), depth+1)
 				if err != nil {
 					return "", err
@@ -443,6 +443,31 @@ func blockToText(block notion.Block) string {
 		}
 	}
 	return ""
+}
+
+// blockChildrenUseful reports whether recursing into a block's children would
+// yield additional text worth including. Child pages and link-to-page blocks
+// are already fully represented by their title/URL from blockToText, so
+// fetching their subtrees is wasteful. Block types not handled by blockToText
+// (tables, columns, images, etc.) produce no output anyway.
+func blockChildrenUseful(block notion.Block) bool {
+	switch block.(type) {
+	case *notion.ChildPageBlock,
+		*notion.ChildDatabaseBlock,
+		*notion.LinkToPageBlock,
+		*notion.TableBlock,
+		*notion.ColumnListBlock,
+		*notion.ColumnBlock,
+		*notion.ImageBlock,
+		*notion.VideoBlock,
+		*notion.FileBlock,
+		*notion.PdfBlock,
+		*notion.BookmarkBlock,
+		*notion.DividerBlock,
+		*notion.EmbedBlock:
+		return false
+	}
+	return true
 }
 
 // richTextToMarkdown converts rich text spans to a string, preserving hrefs

@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"strings"
+	"time"
 )
 
 // AutoTag iterates all active github_project source configs and calls
 // github.AutoTagIssues for each configured repo+project.
 func (e *Engine) AutoTag(ctx context.Context) error {
+	start := time.Now()
+	log.Printf("autotag: starting")
+
 	// Load all catalogue items.
 	items, err := e.store.ListCatalogue(ctx)
 	if err != nil {
@@ -30,15 +33,13 @@ func (e *Engine) AutoTag(ctx context.Context) error {
 		if item.SourceType != "github_project" {
 			continue
 		}
-		if item.Status != "active" {
-			continue
-		}
 		if !item.SourceMeta.Valid || item.SourceMeta.String == "" {
 			continue
 		}
 
 		var meta struct {
 			Owner     string `json:"owner"`
+			Org       string `json:"org"`
 			Repo      string `json:"repo"`
 			ProjectID string `json:"project_id"`
 		}
@@ -46,22 +47,24 @@ func (e *Engine) AutoTag(ctx context.Context) error {
 			log.Printf("autotag: skip %q: parse meta: %v", item.Title, err)
 			continue
 		}
-		if meta.Owner == "" || meta.Repo == "" || meta.ProjectID == "" {
+		if meta.ProjectID == "" {
 			continue
 		}
 
-		// Strip leading slash from repo if owner/repo combined in Owner.
-		owner, repo := meta.Owner, meta.Repo
-		if strings.Contains(owner, "/") {
-			parts := strings.SplitN(owner, "/", 2)
-			owner = parts[0]
-			repo = parts[1]
+		// Prefer explicit owner; fall back to org (org-level projects use "org" not "owner").
+		owner := meta.Owner
+		if owner == "" {
+			owner = meta.Org
 		}
 
-		if err := e.github.AutoTagIssues(ctx, owner, repo, meta.ProjectID, teamLabelMap); err != nil {
-			log.Printf("autotag: %s/%s project %s: %v", owner, repo, meta.ProjectID, err)
+		projectStart := time.Now()
+		if err := e.github.AutoTagIssues(ctx, owner, meta.Repo, meta.ProjectID, teamLabelMap); err != nil {
+			log.Printf("autotag: project %s: %v (%.1fs)", meta.ProjectID, err, time.Since(projectStart).Seconds())
+		} else {
+			log.Printf("autotag: project %s done in %.1fs", meta.ProjectID, time.Since(projectStart).Seconds())
 		}
 	}
 
+	log.Printf("autotag: completed in %.1fs", time.Since(start).Seconds())
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -408,30 +409,56 @@ func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connecto
 	return items, nil
 }
 
-// FetchIssues fetches issues matching the given label updated after since,
-// using the GitHub search API.
+// FetchIssues fetches issues matching the given label.
+// It always returns all currently open issues (full sprint board view) plus
+// issues closed within the last 90 days (velocity signal).
+// The since parameter is accepted but not used for open issues, ensuring the
+// AI always sees the complete current sprint state regardless of sync frequency.
 func (c *Client) FetchIssues(ctx context.Context, owner, repo, label string, since time.Time) ([]*gh.Issue, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
 	}
 
-	sinceStr := since.UTC().Format("2006-01-02")
-	query := fmt.Sprintf("repo:%s/%s label:%s updated:>%s", owner, repo, label, sinceStr)
-
 	var all []*gh.Issue
+
+	// 1. All open issues with this label — no date filter so we always see the full board.
+	if err := c.searchIssues(ctx,
+		fmt.Sprintf("repo:%s/%s label:%q is:open", owner, repo, label),
+		&all,
+	); err != nil {
+		return nil, err
+	}
+
+	// 2. Recently closed issues — 90-day lookback for velocity/progress signal.
+	closedSince := time.Now().AddDate(0, 0, -90)
+	if since.Before(closedSince) {
+		closedSince = since
+	}
+	if err := c.searchIssues(ctx,
+		fmt.Sprintf("repo:%s/%s label:%q is:closed closed:>%s", owner, repo, label, closedSince.UTC().Format("2006-01-02")),
+		&all,
+	); err != nil {
+		return nil, err
+	}
+
+	return all, nil
+}
+
+// searchIssues executes a GitHub issue search query and appends results to dst.
+func (c *Client) searchIssues(ctx context.Context, query string, dst *[]*gh.Issue) error {
 	opts := &gh.SearchOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
 		result, resp, err := c.client.Search.Issues(ctx, query, opts)
 		if err != nil {
-			return nil, fmt.Errorf("github: search issues: %w", err)
+			return fmt.Errorf("github: search issues %q: %w", query, err)
 		}
-		all = append(all, result.Issues...)
+		*dst = append(*dst, result.Issues...)
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
-	return all, nil
+	return nil
 }
 
 // FetchDraftIssues fetches draft issues from a ProjectV2, filtered by Team/Area field value.
@@ -518,7 +545,7 @@ func (c *Client) FetchDraftIssues(ctx context.Context, owner, repo, projectID, t
 			// Check Team/Area field value
 			matched := teamAreaValue == ""
 			for _, fv := range item.FieldValues.Nodes {
-				fieldName := strings.ToLower(fv.Field.Name)
+				fieldName := strings.ToLower(strings.ReplaceAll(fv.Field.Name, " ", ""))
 				if fieldName == "team" || fieldName == "area" || fieldName == "team/area" {
 					if fv.Text == teamAreaValue {
 						matched = true
@@ -602,6 +629,10 @@ func (c *Client) FetchCommits(ctx context.Context, owner, repo string, since, un
 	for {
 		commits, resp, err := c.client.Repositories.ListCommits(ctx, owner, repo, opts)
 		if err != nil {
+			// 409 means the repository exists but has no commits yet — treat as empty.
+			if resp != nil && resp.StatusCode == http.StatusConflict {
+				return result, nil
+			}
 			return nil, fmt.Errorf("github: list commits: %w", err)
 		}
 		for _, commit := range commits {
@@ -652,13 +683,22 @@ func (c *Client) FetchMarkdownFile(ctx context.Context, owner, repo, path string
 
 // AutoTagIssues pages all items in the project; for each item with Team/Area set
 // but missing the corresponding label on the linked issue, applies the label.
-func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID string, teamLabelMap map[string]string) error {
+// The owner parameter is used only as a fallback if the issue's repository cannot
+// be determined from GraphQL; repo is always resolved per-issue from content.
+func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, teamLabelMap map[string]string) error {
 	if err := c.checkToken(); err != nil {
 		return err
 	}
 
 	type issueContent struct {
 		Number int    `json:"number"`
+		State  string `json:"state"`
+		Repository struct {
+			Name  string `json:"name"`
+			Owner struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
 		Labels struct {
 			Nodes []struct {
 				Name string `json:"name"`
@@ -693,13 +733,18 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID strin
 	const query = `query($projectID: ID!, $cursor: String) {
 		node(id: $projectID) {
 			... on ProjectV2 {
-				items(first: 50, after: $cursor) {
+				items(first: 100, after: $cursor) {
 					pageInfo { hasNextPage endCursor }
 					nodes {
 						type
 						content {
 							... on Issue {
 								number
+								state
+								repository {
+									name
+									owner { login }
+								}
 								labels(first: 20) {
 									nodes { name }
 								}
@@ -723,13 +768,29 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID strin
 		}
 	}`
 
-	var cursor *string
+	var (
+		cursor         *string
+		page           int
+		totalItems     int
+		skippedClosed  int
+		alreadyLabeled int
+		noTeamArea     int
+		noLabel        int
+		labeled        int
+		labelErrors    int
+		unmappedValues = map[string]int{}
+	)
 	for {
+		page++
+		pageStart := time.Now()
 		vars := map[string]any{"projectID": projectID, "cursor": cursor}
 		var data projectData
 		if err := c.graphql(ctx, query, vars, &data); err != nil {
 			return err
 		}
+		pageItems := len(data.Node.Items.Nodes)
+		totalItems += pageItems
+		log.Printf("autotag: project %s page %d: %d items fetched in %.2fs", projectID, page, pageItems, time.Since(pageStart).Seconds())
 
 		for _, item := range data.Node.Items.Nodes {
 			if item.Type != "ISSUE" {
@@ -739,7 +800,7 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID strin
 			// Find Team/Area field value
 			teamAreaValue := ""
 			for _, fv := range item.FieldValues.Nodes {
-				fn := strings.ToLower(fv.Field.Name)
+				fn := strings.ToLower(strings.ReplaceAll(fv.Field.Name, " ", ""))
 				if fn == "team" || fn == "area" || fn == "team/area" {
 					if fv.Name != "" {
 						teamAreaValue = fv.Name
@@ -748,12 +809,21 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID strin
 				}
 			}
 			if teamAreaValue == "" {
+				noTeamArea++
+				continue
+			}
+
+			// Skip closed issues — labels on closed issues don't affect FetchIssues results.
+			if strings.EqualFold(item.Content.State, "closed") {
+				skippedClosed++
 				continue
 			}
 
 			// Look up target label
 			targetLabel, ok := teamLabelMap[teamAreaValue]
 			if !ok {
+				unmappedValues[teamAreaValue]++
+				noLabel++
 				continue
 			}
 
@@ -766,18 +836,35 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID strin
 				}
 			}
 			if hasLabel {
+				alreadyLabeled++
 				continue
 			}
 
-			// Apply the label
 			issueNum := item.Content.Number
 			if issueNum == 0 {
 				continue
 			}
-			_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, []string{targetLabel})
-			if err != nil {
-				return fmt.Errorf("github: add label %q to issue #%d: %w", targetLabel, issueNum, err)
+
+			// Resolve owner/repo from the issue itself; fall back to the caller-provided owner.
+			issueOwner := item.Content.Repository.Owner.Login
+			issueRepo := item.Content.Repository.Name
+			if issueOwner == "" {
+				issueOwner = owner
 			}
+			if issueOwner == "" || issueRepo == "" {
+				log.Printf("autotag: skip issue #%d: cannot determine repository", issueNum)
+				continue
+			}
+
+			t0 := time.Now()
+			_, _, err := c.client.Issues.AddLabelsToIssue(ctx, issueOwner, issueRepo, issueNum, []string{targetLabel})
+			if err != nil {
+				labelErrors++
+				log.Printf("autotag: error labeling issue #%d (%s/%s) with %q: %v (%.2fs)", issueNum, issueOwner, issueRepo, targetLabel, err, time.Since(t0).Seconds())
+				continue
+			}
+			labeled++
+			log.Printf("autotag: labeled issue #%d (%s/%s) with %q in %.2fs", issueNum, issueOwner, issueRepo, targetLabel, time.Since(t0).Seconds())
 		}
 
 		if !data.Node.Items.PageInfo.HasNextPage {
@@ -785,6 +872,11 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, repo, projectID strin
 		}
 		c2 := data.Node.Items.PageInfo.EndCursor
 		cursor = &c2
+	}
+	log.Printf("autotag: project %s summary: %d items across %d pages — %d already labeled, %d newly labeled, %d closed skipped, %d no team/area, %d unmapped team, %d errors",
+		projectID, totalItems, page, alreadyLabeled, labeled, skippedClosed, noTeamArea, noLabel, labelErrors)
+	if len(unmappedValues) > 0 {
+		log.Printf("autotag: project %s unmapped team/area values: %v", projectID, unmappedValues)
 	}
 	return nil
 }

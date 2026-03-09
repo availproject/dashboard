@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/your-org/dashboard/internal/ai"
 	"github.com/your-org/dashboard/internal/store"
@@ -99,7 +100,11 @@ func (r *Runner) RunSprintParse(ctx context.Context, teamID int64, sprintPlanTex
 
 	var result SprintParseResult
 	if err := r.generate(ctx, SprintParsePipeline, sprintParseSchema, &teamID,
-		map[string]any{"sprint_plan_text": sprintPlanText},
+		map[string]any{
+			"sprint_plan_text": sprintPlanText,
+			"today":            time.Now().Format("2006-01-02"),
+			"instructions":     "This document is the CURRENT sprint plan. Count only the sprint weeks defined in this document for total_sprints (e.g. if it defines Sprint 6, 7, 8, 9 then total_sprints=4, not 9). For current_sprint, use today's date and start_date to determine which sprint week we are on within this plan (1 = first week of this plan).",
+		},
 		annotations, &result); err != nil {
 		return nil, err
 	}
@@ -158,6 +163,7 @@ func (r *Runner) RunConcerns(ctx context.Context, teamID int64, input ConcernsIn
 	var result ConcernsResult
 	if err := r.generate(ctx, ConcernsPipeline, concernsSchema, &teamID,
 		map[string]any{
+			"today":            time.Now().Format("2006-01-02"),
 			"open_issues":      input.OpenIssues,
 			"merged_prs":       input.MergedPRs,
 			"sprint_plan_text": input.SprintPlanText,
@@ -213,14 +219,22 @@ func (r *Runner) RunTeamStatus(ctx context.Context, teamID int64, input TeamStat
 		return nil, err
 	}
 
+	now := time.Now()
+	timing := sprintTimingContext(input.SprintMeta, now)
+	timingJSON, _ := json.Marshal(timing)
+	log.Printf("DEBUG team_status [team %d]: sprint_timing=%s", teamID, timingJSON)
+
 	var result TeamStatusResult
 	if err := r.generate(ctx, TeamStatusPipeline, teamStatusSchema, &teamID,
 		map[string]any{
+			"today":            now.Format("2006-01-02"),
 			"goals_doc_text":   input.GoalsDocText,
 			"sprint_plan_text": input.SprintPlanText,
 			"sprint_meta":      input.SprintMeta,
+			"sprint_timing":    timing,
 			"open_issues":      input.OpenIssues,
 			"merged_prs":       input.MergedPRs,
+			"instructions":     teamStatusInstructions,
 		},
 		annotations, &result); err != nil {
 		return nil, err

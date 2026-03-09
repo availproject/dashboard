@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/your-org/dashboard/internal/connector"
 )
@@ -132,18 +133,32 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 		_, _ = e.store.UpsertSourceConfig(ctx, catID, nullTeamID, "sprint_doc",
 			sql.NullString{String: string(metaJSON), Valid: true}, "ai_extracted")
 
-		// Store sprint dates in sprint_meta so the team view shows the correct week.
-		if sp.SprintStatus == "current" && (sp.StartDate != nil || sp.EndDate != nil) {
-			startDate := sql.NullString{}
-			if sp.StartDate != nil && *sp.StartDate != "" {
-				startDate = sql.NullString{String: *sp.StartDate, Valid: true}
+		// Compute plan_start_date from the anchor and store it in sprint_meta.
+		// Anchor: sprint_start_date is when the active sprint week began;
+		// active_sprint_week is its 1-based position within the plan.
+		// plan_start_date = sprint_start_date - (active_sprint_week - 1) * 7 days.
+		if sp.SprintStatus == "current" {
+			planStartDate := sql.NullString{}
+			if sp.SprintStartDate != nil && *sp.SprintStartDate != "" && sp.ActiveSprintWeek != nil && *sp.ActiveSprintWeek > 0 {
+				if anchor, err := time.Parse("2006-01-02", *sp.SprintStartDate); err == nil {
+					planStart := anchor.AddDate(0, 0, -(*sp.ActiveSprintWeek-1)*7)
+					planStartDate = sql.NullString{String: planStart.Format("2006-01-02"), Valid: true}
+				}
 			}
-			endDate := sql.NullString{}
-			if sp.EndDate != nil && *sp.EndDate != "" {
-				endDate = sql.NullString{String: *sp.EndDate, Valid: true}
+			sprintWeek, sprintStart, totalWeeks := 0, "", 0
+			if sp.ActiveSprintWeek != nil {
+				sprintWeek = *sp.ActiveSprintWeek
 			}
+			if sp.SprintStartDate != nil {
+				sprintStart = *sp.SprintStartDate
+			}
+			if sp.TotalWeeksInPlan != nil {
+				totalWeeks = *sp.TotalWeeksInPlan
+			}
+			log.Printf("INFO  homepage_extract [run %d team %d]: sprint anchor: sprint_week=%d start=%q total=%d → plan_start_date=%q",
+				runID, teamID, sprintWeek, sprintStart, totalWeeks, planStartDate.String)
 			_, _ = e.store.UpsertSprintMeta(ctx, teamID, "current",
-				sql.NullInt64{}, startDate, endDate, sql.NullString{})
+				sql.NullInt64{}, planStartDate, sql.NullString{}, sql.NullString{})
 		}
 	}
 

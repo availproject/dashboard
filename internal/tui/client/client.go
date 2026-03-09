@@ -271,6 +271,8 @@ type TeamItem struct {
 // SprintResponse is returned by GetSprint.
 type SprintResponse struct {
 	PlanType          string   `json:"plan_type"`
+	PlanTitle         string   `json:"plan_title"`
+	PlanURL           string   `json:"plan_url"`
 	StartDate         *string  `json:"start_date"`
 	CurrentSprint     int      `json:"current_sprint"`
 	TotalSprints      int      `json:"total_sprints"`
@@ -557,6 +559,21 @@ func (c *Client) GetMetrics(teamID int64) (*MetricsResponse, error) {
 }
 
 // PostSync triggers a sync for the given scope.
+// PostAutotag starts the autotag job on the server and returns the sync run ID for polling.
+func (c *Client) PostAutotag() (int64, error) {
+	resp, err := c.doRequest("GET", c.serverAddr+"/admin/autotag", nil)
+	if err != nil {
+		return 0, err
+	}
+	if err := checkStatus(resp, http.StatusAccepted); err != nil {
+		return 0, err
+	}
+	var result struct {
+		SyncRunID int64 `json:"sync_run_id"`
+	}
+	return result.SyncRunID, decodeJSON(resp, &result)
+}
+
 func (c *Client) PostSync(scope string, teamID *int64) (int64, error) {
 	body, err := json.Marshal(map[string]any{"scope": scope, "team_id": teamID})
 	if err != nil {

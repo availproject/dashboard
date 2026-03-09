@@ -14,9 +14,9 @@ INSERT INTO sprint_meta (team_id, plan_type, sprint_number, start_date, end_date
 VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(team_id, plan_type) DO UPDATE SET
   sprint_number = excluded.sprint_number,
-  start_date    = excluded.start_date,
-  end_date      = excluded.end_date,
-  raw_content   = excluded.raw_content,
+  start_date    = COALESCE(excluded.start_date, start_date),
+  end_date      = COALESCE(excluded.end_date, end_date),
+  raw_content   = COALESCE(excluded.raw_content, raw_content),
   updated_at    = CURRENT_TIMESTAMP`
 	_, err := s.db.ExecContext(ctx, q, teamID, planType, sprintNumber, startDate, endDate, rawContent)
 	if err != nil {
