@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,7 +101,9 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 	return nil
 }
 
-// Discover enumerates labels, GitHub ProjectsV2, and .md files in the target "owner/repo".
+// Discover enumerates a github_repo root item, its labels, GitHub ProjectsV2,
+// and .md files for the target "owner/repo". The repo item is always first so
+// the discovery loop can resolve its catalogue ID before processing children.
 func (c *Client) Discover(ctx context.Context, target string) ([]connector.DiscoveredItem, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
@@ -110,12 +113,57 @@ func (c *Client) Discover(ctx context.Context, target string) ([]connector.Disco
 		return nil, err
 	}
 
-	var items []connector.DiscoveredItem
+	repoExtID := owner + "/" + repo
 
-	// 1. Labels
-	labelOpts := &gh.ListOptions{PerPage: 100}
+	// Root: the repo itself.
+	items := []connector.DiscoveredItem{{
+		SourceType: "github_repo",
+		ExternalID: repoExtID,
+		Title:      repoExtID,
+		URL:        fmt.Sprintf("https://github.com/%s/%s", owner, repo),
+		SourceMeta: map[string]any{"owner": owner, "repo": repo},
+	}}
+
+	// 1. Labels (children of repo).
+	labelItems, err := c.discoverLabels(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	for i := range labelItems {
+		labelItems[i].ParentExternalID = repoExtID
+		labelItems[i].ParentSourceType = "github_repo"
+	}
+	items = append(items, labelItems...)
+
+	// 2. GitHub Projects (children of repo).
+	projectItems, err := c.discoverProjects(ctx, owner, repo)
+	if err == nil {
+		for i := range projectItems {
+			projectItems[i].ParentExternalID = repoExtID
+			projectItems[i].ParentSourceType = "github_repo"
+		}
+		items = append(items, projectItems...)
+	}
+
+	// 3. Markdown files (children of repo).
+	mdItems, err := c.discoverMarkdownFiles(ctx, owner, repo)
+	if err == nil {
+		for i := range mdItems {
+			mdItems[i].ParentExternalID = repoExtID
+			mdItems[i].ParentSourceType = "github_repo"
+		}
+		items = append(items, mdItems...)
+	}
+
+	return items, nil
+}
+
+// discoverLabels fetches all labels from owner/repo without setting parent info.
+func (c *Client) discoverLabels(ctx context.Context, owner, repo string) ([]connector.DiscoveredItem, error) {
+	var items []connector.DiscoveredItem
+	opts := &gh.ListOptions{PerPage: 100}
 	for {
-		labels, resp, err := c.client.Issues.ListLabels(ctx, owner, repo, labelOpts)
+		labels, resp, err := c.client.Issues.ListLabels(ctx, owner, repo, opts)
 		if err != nil {
 			return nil, fmt.Errorf("github: list labels: %w", err)
 		}
@@ -125,37 +173,15 @@ func (c *Client) Discover(ctx context.Context, target string) ([]connector.Disco
 				ExternalID: fmt.Sprintf("%s/%s/labels/%s", owner, repo, l.GetName()),
 				Title:      l.GetName(),
 				URL:        fmt.Sprintf("https://github.com/%s/%s/labels/%s", owner, repo, l.GetName()),
-				SourceMeta: map[string]any{
-					"owner": owner,
-					"repo":  repo,
-					"color": l.GetColor(),
-				},
-				Excerpt: l.GetDescription(),
+				SourceMeta: map[string]any{"owner": owner, "repo": repo, "color": l.GetColor()},
+				Excerpt:    l.GetDescription(),
 			})
 		}
 		if resp.NextPage == 0 {
 			break
 		}
-		labelOpts.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
-
-	// 2. GitHub Projects (ProjectV2) via GraphQL
-	projectItems, err := c.discoverProjects(ctx, owner, repo)
-	if err != nil {
-		// Non-fatal: projects may not be enabled
-		_ = err
-	} else {
-		items = append(items, projectItems...)
-	}
-
-	// 3. Markdown files via git tree API
-	mdItems, err := c.discoverMarkdownFiles(ctx, owner, repo)
-	if err != nil {
-		_ = err
-	} else {
-		items = append(items, mdItems...)
-	}
-
 	return items, nil
 }
 
@@ -260,6 +286,125 @@ func (c *Client) discoverMarkdownFiles(ctx context.Context, owner, repo string) 
 			},
 		})
 	}
+	return items, nil
+}
+
+// DiscoverProject discovers sources reachable from a GitHub ProjectV2.
+// target must be in "org/project-number" format (e.g. "acme/5").
+// It fetches the project's linked repositories via a single fast GraphQL query
+// (no item pagination) then runs full label/file discovery on each repo.
+func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connector.DiscoveredItem, error) {
+	if err := c.checkToken(); err != nil {
+		return nil, err
+	}
+
+	org, numberStr, found := strings.Cut(target, "/")
+	if !found || org == "" || numberStr == "" {
+		return nil, fmt.Errorf("github: project target must be 'org/project-number', got %q", target)
+	}
+	number, err := strconv.Atoi(numberStr)
+	if err != nil {
+		return nil, fmt.Errorf("github: project number must be an integer, got %q", numberStr)
+	}
+
+	type repoNode struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	}
+	type projectData struct {
+		Organization struct {
+			ProjectV2 struct {
+				ID           string `json:"id"`
+				Title        string `json:"title"`
+				URL          string `json:"url"`
+				Repositories struct {
+					Nodes []repoNode `json:"nodes"`
+				} `json:"repositories"`
+			} `json:"projectV2"`
+		} `json:"organization"`
+	}
+
+	const query = `query($org: String!, $number: Int!) {
+		organization(login: $org) {
+			projectV2(number: $number) {
+				id
+				title
+				url
+				repositories(first: 20) {
+					nodes {
+						name
+						owner { login }
+					}
+				}
+			}
+		}
+	}`
+
+	var data projectData
+	if err := c.graphql(ctx, query, map[string]any{"org": org, "number": number}, &data); err != nil {
+		return nil, fmt.Errorf("github: discover project: %w", err)
+	}
+
+	proj := data.Organization.ProjectV2
+	if proj.ID == "" {
+		return nil, fmt.Errorf("github: project %q not found in org %q", numberStr, org)
+	}
+
+	// Root: the project itself.
+	items := []connector.DiscoveredItem{{
+		SourceType: "github_project",
+		ExternalID: proj.ID,
+		Title:      proj.Title,
+		URL:        proj.URL,
+		SourceMeta: map[string]any{
+			"org":            org,
+			"project_number": number,
+			"project_id":     proj.ID,
+		},
+	}}
+
+	// Discover labels and files from each linked repo.
+	// We call discoverLabels/discoverMarkdownFiles directly (not Discover) to
+	// avoid re-emitting the project via discoverProjects and creating cycles.
+	for _, repo := range proj.Repositories.Nodes {
+		repoOwner := repo.Owner.Login
+		repoName := repo.Name
+		repoExtID := repoOwner + "/" + repoName
+
+		// Repo item as child of project.
+		items = append(items, connector.DiscoveredItem{
+			SourceType:       "github_repo",
+			ExternalID:       repoExtID,
+			Title:            repoExtID,
+			URL:              fmt.Sprintf("https://github.com/%s/%s", repoOwner, repoName),
+			SourceMeta:       map[string]any{"owner": repoOwner, "repo": repoName},
+			ParentExternalID: proj.ID,
+			ParentSourceType: "github_project",
+		})
+
+		// Labels as children of repo.
+		labels, err := c.discoverLabels(ctx, repoOwner, repoName)
+		if err == nil {
+			for i := range labels {
+				labels[i].ParentExternalID = repoExtID
+				labels[i].ParentSourceType = "github_repo"
+			}
+			items = append(items, labels...)
+		}
+
+		// Markdown files as children of repo.
+		mdFiles, err := c.discoverMarkdownFiles(ctx, repoOwner, repoName)
+		if err == nil {
+			for i := range mdFiles {
+				mdFiles[i].ParentExternalID = repoExtID
+				mdFiles[i].ParentSourceType = "github_repo"
+			}
+			items = append(items, mdFiles...)
+		}
+	}
+
 	return items, nil
 }
 

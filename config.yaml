@@ -1,16 +1,16 @@
 server:
-  port: 8080
+  port: 8081
 
 storage:
   path: ./dashboard.db
 
 auth:
-  jwt_secret: changeme
+  jwt_secret: sdunc9w8eh32f923bf2038f2h3f88f29n9238fbyw8ecvbq9q0ss9sdfs0
   admin_username: admin
-  admin_password_hash: ""
+  admin_password_hash: "$2a$12$yV0H1YNa9oA6uKHIQK6T5O5mBXqDbXxwZyaqFMPqeXtpgdsXTvjUi"
 
 ai:
-  provider: anthropic
+  provider: claude-code
   model: claude-opus-4-6
   api_key: ""
   binary_path: claude

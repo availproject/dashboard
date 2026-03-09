@@ -16,10 +16,9 @@ var (
 )
 
 var configMenuItems = []string{
-	"Teams & Members",
-	"Sources",
-	"Business Metrics",
-	"Annotations",
+	"Teams",
+	"Org",
+	"All Sources",
 	"Users",
 }
 
@@ -62,13 +61,13 @@ func (v *ConfigRootView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (v *ConfigRootView) pushSubView() tea.Cmd {
 	var subView tea.Model
 	switch v.cursor {
-	case 0:
-		subView = NewConfigTeamsView(v.c)
-	case 1:
+	case 0: // Teams
+		subView = NewConfigTeamListView(v.c)
+	case 1: // Org
+		subView = NewConfigOrgSlotsView(v.c)
+	case 2: // All Sources
 		subView = NewConfigSourcesView(v.c)
-	case 3:
-		subView = NewConfigAnnotationsView(v.c)
-	case 4:
+	case 3: // Users
 		subView = NewConfigUsersView(v.c)
 	default:
 		return nil

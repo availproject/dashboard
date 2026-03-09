@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v60/github"
@@ -51,6 +53,8 @@ func (e *Engine) Sync(ctx context.Context, scope string, teamID *int64) (int64, 
 func (e *Engine) syncBackground(runID int64, scope string, teamID *int64) {
 	ctx := context.Background()
 	errs := make(map[string]string)
+	syncStart := time.Now()
+	log.Printf("INFO  sync [run %d scope=%s]: started", runID, scope)
 
 	switch scope {
 	case "org":
@@ -63,13 +67,15 @@ func (e *Engine) syncBackground(runID int64, scope string, teamID *int64) {
 			return
 		}
 		td := e.fetchTeamData(ctx, *teamID, errs)
-		e.runTeamPipelines(ctx, *teamID, td)
+		e.runTeamPipelines(ctx, *teamID, td, errs)
 	}
 
 	if len(errs) > 0 {
 		b, _ := json.Marshal(errs)
+		log.Printf("INFO  sync [run %d]: done in %s with errors: %s", runID, time.Since(syncStart).Round(time.Millisecond), string(b))
 		_ = e.store.UpdateSyncRun(ctx, runID, "error", sql.NullString{String: string(b), Valid: true})
 	} else {
+		log.Printf("INFO  sync [run %d]: done in %s", runID, time.Since(syncStart).Round(time.Millisecond))
 		_ = e.store.UpdateSyncRun(ctx, runID, "done", sql.NullString{})
 	}
 }
@@ -84,7 +90,7 @@ func (e *Engine) syncOrg(ctx context.Context, errs map[string]string) {
 	teamGoals := make(map[int64][]string)
 	for _, team := range teams {
 		td := e.fetchTeamData(ctx, team.ID, errs)
-		goals := e.runTeamPipelines(ctx, team.ID, td)
+		goals := e.runTeamPipelines(ctx, team.ID, td, errs)
 		if len(goals) > 0 {
 			teamGoals[team.ID] = goals
 		}
@@ -122,8 +128,23 @@ func (e *Engine) fetchOrgGoalsText(ctx context.Context, errs map[string]string) 
 	return sb.String()
 }
 
+// notionFetchWork holds everything needed to do one Notion/github_file fetch in a goroutine.
+type notionFetchWork struct {
+	cfg  *store.SourceConfig
+	item *store.SourceCatalogue
+}
+
+// notionFetchResult carries the result back from a goroutine.
+type notionFetchResult struct {
+	cfg     *store.SourceConfig
+	item    *store.SourceCatalogue
+	content string
+	err     error
+}
+
 // fetchTeamData loads source_configs for a team, fetches each source incrementally, and
 // returns the aggregated data. Per-source errors are recorded in errs; the run is not aborted.
+// Notion/github_file fetches run in parallel to reduce latency.
 func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[string]string) teamSyncData {
 	var td teamSyncData
 
@@ -133,26 +154,135 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 		return td
 	}
 
+	// Separate configs into content sources (fetch in parallel) and GitHub sources (sequential).
+	var contentWork []notionFetchWork
+	var githubConfigs []*store.SourceConfig
+	githubItems := map[int64]*store.SourceCatalogue{}
+
+	// Build set of catalogue IDs that serve as the project homepage — they should
+	// never be fetched as content sources even if they carry an old purpose tag.
+	homepageIDs := map[int64]bool{}
 	for _, cfg := range configs {
+		if cfg.Purpose == "project_homepage" {
+			homepageIDs[cfg.CatalogueID] = true
+		}
+	}
+
+	// Track seen catalogue IDs to avoid fetching the same item twice when old
+	// and new purpose configs both exist for the same underlying page.
+	seenContentIDs := map[int64]bool{}
+
+	for _, cfg := range configs {
+		if cfg.Purpose == "project_homepage" || cfg.Purpose == "metrics_panel" {
+			continue
+		}
 		item, err := e.store.GetCatalogueItem(ctx, cfg.CatalogueID)
 		if err != nil {
 			continue
 		}
+		if homepageIDs[item.ID] {
+			continue // skip items that are the homepage regardless of purpose
+		}
+		switch item.SourceType {
+		case "notion_page", "notion_db", "github_file":
+			// Only fetch if this purpose produces sync content.
+			switch cfg.Purpose {
+			case "current_plan", "sprint_doc", "goals", "goals_doc":
+				if !seenContentIDs[item.ID] {
+					seenContentIDs[item.ID] = true
+					contentWork = append(contentWork, notionFetchWork{cfg: cfg, item: item})
+				}
+			}
+		case "github_label", "github_repo":
+			githubConfigs = append(githubConfigs, cfg)
+			githubItems[cfg.ID] = item
+		}
+	}
+
+	// Fetch Notion/file content in parallel.
+	fetchStart := time.Now()
+	log.Printf("INFO  sync [team %d]: fetching %d content source(s) in parallel", teamID, len(contentWork))
+	results := make(chan notionFetchResult, len(contentWork))
+	var wg sync.WaitGroup
+	for _, w := range contentWork {
+		wg.Add(1)
+		go func(w notionFetchWork) {
+			defer wg.Done()
+			t0 := time.Now()
+			var content string
+			var err error
+			if w.item.SourceType == "github_file" {
+				content, err = e.fetchGithubFileContent(ctx, w.item)
+			} else {
+				content, err = e.fetchNotionContent(ctx, w.item)
+			}
+			cached := w.item.NotionLastEdited.Valid && err == nil && time.Since(t0) < 500*time.Millisecond
+			cacheLabel := "fresh"
+			if cached {
+				cacheLabel = "cached"
+			}
+			log.Printf("INFO  sync [team %d]: fetched %s:%s (%d chars, %s) in %s",
+				teamID, w.item.SourceType, w.item.ExternalID, len(content), cacheLabel, time.Since(t0).Round(time.Millisecond))
+			results <- notionFetchResult{cfg: w.cfg, item: w.item, content: content, err: err}
+		}(w)
+	}
+	go func() { wg.Wait(); close(results) }()
+
+	for r := range results {
+		key := fmt.Sprintf("%s:%s", r.item.SourceType, r.item.ExternalID)
+		if r.err != nil {
+			errs[key] = r.err.Error()
+			continue
+		}
+		_ = e.store.TouchCatalogueItem(ctx, r.item.ID)
+		switch r.cfg.Purpose {
+		case "current_plan":
+			td.currentPlanText = r.content
+		case "sprint_doc":
+			meta := parseJSONMeta(r.cfg.ConfigMeta)
+			if status, _ := meta["sprint_status"].(string); status == "current" {
+				td.currentPlanText = r.content
+			}
+		case "goals", "goals_doc":
+			td.goalsDocText = r.content
+		}
+	}
+
+	log.Printf("INFO  sync [team %d]: content fetch done in %s", teamID, time.Since(fetchStart).Round(time.Millisecond))
+
+	// GitHub sources: fetch sequentially (rate-limit friendly).
+	// Fetch all commits without a login filter so we can discover new contributors.
+	log.Printf("INFO  sync [team %d]: fetching %d github source(s)", teamID, len(githubConfigs))
+	existingMembers, _ := e.store.GetTeamMembers(ctx, teamID)
+	knownLogins := map[string]bool{}
+	for _, m := range existingMembers {
+		if m.GithubLogin.Valid && m.GithubLogin.String != "" {
+			knownLogins[strings.ToLower(m.GithubLogin.String)] = true
+		}
+	}
+	log.Printf("INFO  sync [team %d]: %d existing members with github logins", teamID, len(knownLogins))
+
+	for _, cfg := range githubConfigs {
+		item := githubItems[cfg.ID]
 		since := item.UpdatedAt
 		key := fmt.Sprintf("%s:%s", item.SourceType, item.ExternalID)
 
 		switch item.SourceType {
-		case "notion_page", "notion_db":
-			content, fetchErr := e.fetchNotionContent(ctx, item)
-			if fetchErr != nil {
-				errs[key] = fetchErr.Error()
+		case "github_label":
+			meta := parseJSONMeta(item.SourceMeta)
+			owner, _ := meta["owner"].(string)
+			repo, _ := meta["repo"].(string)
+			if owner == "" || repo == "" {
+				errs[key+":no_owner_repo"] = "missing owner/repo in source_meta"
 				continue
 			}
-			switch cfg.Purpose {
-			case "current_plan":
-				td.currentPlanText = content
-			case "goals":
-				td.goalsDocText = content
+			issues, fetchErr := e.github.FetchIssues(ctx, owner, repo, item.Title, since)
+			if fetchErr != nil {
+				errs[key+":issues"] = fetchErr.Error()
+				log.Printf("WARN  sync [team %d]: %s fetch issues: %v", teamID, key, fetchErr)
+			} else {
+				log.Printf("INFO  sync [team %d]: %s: %d issues", teamID, key, len(issues))
+				td.openIssues = append(td.openIssues, issues...)
 			}
 			_ = e.store.TouchCatalogueItem(ctx, item.ID)
 
@@ -162,38 +292,61 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 				errs[key+":no_owner_repo"] = "missing owner/repo in source_meta or external_id"
 				continue
 			}
+			log.Printf("INFO  sync [team %d]: github_repo %s/%s (since %s)", teamID, owner, repo, since.Format("2006-01-02"))
 
-			// Merged PRs (always fetch).
 			prs, fetchErr := e.github.FetchMergedPRs(ctx, owner, repo, since)
 			if fetchErr != nil {
 				errs[key+":prs"] = fetchErr.Error()
+				log.Printf("WARN  sync [team %d]: %s fetch PRs: %v", teamID, key, fetchErr)
 			} else {
+				log.Printf("INFO  sync [team %d]: %s: %d merged PRs", teamID, key, len(prs))
 				td.mergedPRs = append(td.mergedPRs, prs...)
 			}
 
-			// Issues — only when a label is configured in source_meta.
 			meta := parseJSONMeta(item.SourceMeta)
 			if label, _ := meta["label"].(string); label != "" {
 				issues, fetchErr := e.github.FetchIssues(ctx, owner, repo, label, since)
 				if fetchErr != nil {
 					errs[key+":issues"] = fetchErr.Error()
+					log.Printf("WARN  sync [team %d]: %s fetch issues: %v", teamID, key, fetchErr)
 				} else {
+					log.Printf("INFO  sync [team %d]: %s: %d issues (label=%s)", teamID, key, len(issues), label)
 					td.openIssues = append(td.openIssues, issues...)
 				}
 			}
 
-			// Commits filtered by team member GitHub logins.
-			members, _ := e.store.GetTeamMembers(ctx, teamID)
-			var logins []string
-			for _, m := range members {
-				if m.GithubLogin.Valid && m.GithubLogin.String != "" {
-					logins = append(logins, m.GithubLogin.String)
-				}
+			// Fetch all commits; auto-add new contributors as team members.
+			// Use at least a 90-day window so newly-added repos discover historical contributors.
+			commitSince := since
+			if floor := time.Now().AddDate(0, 0, -90); since.After(floor) {
+				commitSince = floor
 			}
-			commits, fetchErr := e.github.FetchCommits(ctx, owner, repo, since, time.Now(), logins)
+			commits, fetchErr := e.github.FetchCommits(ctx, owner, repo, commitSince, time.Now(), nil)
 			if fetchErr != nil {
 				errs[key+":commits"] = fetchErr.Error()
+				log.Printf("WARN  sync [team %d]: %s fetch commits: %v", teamID, key, fetchErr)
 			} else {
+				newMembers := 0
+				for _, commit := range commits {
+					if commit.Author == nil {
+						continue
+					}
+					login := strings.ToLower(commit.Author.GetLogin())
+					if login == "" || knownLogins[login] {
+						continue
+					}
+					name := login
+					if c := commit.GetCommit(); c != nil {
+						if n := c.GetAuthor().GetName(); n != "" {
+							name = n
+						}
+					}
+					_ = e.store.UpsertMemberByGithubLogin(ctx, teamID, login, name)
+					knownLogins[login] = true
+					newMembers++
+					log.Printf("INFO  sync [team %d]: auto-added member %q (%s) from commits", teamID, name, login)
+				}
+				log.Printf("INFO  sync [team %d]: %s: %d commits, %d new members discovered", teamID, key, len(commits), newMembers)
 				td.commits = append(td.commits, commits...)
 			}
 
@@ -203,12 +356,44 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	return td
 }
 
+// fetchGithubFileContent retrieves the raw content of a github_file catalogue item.
+// The owner, repo, and path are parsed from source_meta.
+func (e *Engine) fetchGithubFileContent(ctx context.Context, item *store.SourceCatalogue) (string, error) {
+	_ = ctx
+	meta := parseJSONMeta(item.SourceMeta)
+	_, _ = meta["owner"].(string)
+	_, _ = meta["repo"].(string)
+	_, _ = meta["path"].(string)
+	return "", fmt.Errorf("github_file fetch not yet implemented")
+}
+
+// fetchSourceContent retrieves text content from a catalogue item.
+// Handles notion_page, notion_db, and github_file.
+func (e *Engine) fetchSourceContent(ctx context.Context, item *store.SourceCatalogue) (string, error) {
+	switch item.SourceType {
+	case "github_file":
+		return e.fetchGithubFileContent(ctx, item)
+	default:
+		return e.fetchNotionContent(ctx, item)
+	}
+}
+
 // fetchNotionContent retrieves text content from a notion_page or notion_db catalogue item.
+// For notion_page, uses cached content when the page hasn't changed since the last fetch.
 func (e *Engine) fetchNotionContent(ctx context.Context, item *store.SourceCatalogue) (string, error) {
 	switch item.SourceType {
 	case "notion_page":
-		content, _, err := e.notion.FetchPage(ctx, item.ExternalID)
-		return content, err
+		content, lastEdited, changed, err := e.notion.FetchPageIfChanged(ctx, item.ExternalID, item.NotionLastEdited.String)
+		if err != nil {
+			return "", err
+		}
+		if !changed {
+			// Page unchanged — return cached content.
+			return item.RawContent.String, nil
+		}
+		// Store new content and last-edited timestamp for next sync.
+		_ = e.store.UpdateCatalogueContent(ctx, item.ID, content, lastEdited)
+		return content, nil
 	case "notion_db":
 		rows, err := e.notion.FetchDatabase(ctx, item.ExternalID, item.UpdatedAt)
 		if err != nil {
@@ -226,63 +411,113 @@ func (e *Engine) fetchNotionContent(ctx context.Context, item *store.SourceCatal
 	}
 }
 
-// runTeamPipelines executes the full pipeline chain for a team in order:
-// sprint_parse → goal_extraction → concerns → workload_estimation → velocity_analysis.
-// Returns the extracted goal texts for use in org-level goal_alignment.
-func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSyncData) []string {
-	// 1. sprint_parse
+// runTeamPipelines executes the pipeline chain for a team in two parallel phases:
+//
+//	Phase 1 (parallel): sprint_parse, velocity_analysis
+//	Phase 2 (parallel, after phase 1): team_status, workload_estimation
+//
+// Returns the extracted business goal texts for use in org-level goal_alignment.
+func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSyncData, errs map[string]string) []string {
+	var (
+		mu        sync.Mutex
+		goalTexts []string
+	)
+
+	// Phase 1: independent pipelines run concurrently.
+	p1Start := time.Now()
+	log.Printf("INFO  sync [team %d]: pipeline phase 1 start (sprint_parse, velocity)", teamID)
+	var phase1 sync.WaitGroup
+
 	if td.currentPlanText != "" {
-		_, _ = e.pipeline.RunSprintParse(ctx, teamID, td.currentPlanText)
+		phase1.Add(1)
+		go func() {
+			defer phase1.Done()
+			t0 := time.Now()
+			_, _ = e.pipeline.RunSprintParse(ctx, teamID, td.currentPlanText)
+			log.Printf("INFO  sync [team %d]: sprint_parse done in %s", teamID, time.Since(t0).Round(time.Millisecond))
+		}()
 	}
 
-	// 2. goal_extraction
-	var goalTexts []string
-	if td.currentPlanText != "" || td.goalsDocText != "" {
-		result, err := e.pipeline.RunGoalExtraction(ctx, teamID, td.goalsDocText, td.currentPlanText)
-		if err == nil && result != nil {
-			for _, g := range result.Goals {
-				goalTexts = append(goalTexts, g.Text)
-			}
-		}
-	}
-
-	sprintMeta, _ := e.store.GetSprintMeta(ctx, teamID, "current")
-
-	// 3. concerns
-	_, _ = e.pipeline.RunConcerns(ctx, teamID, pipeline.ConcernsInput{
-		OpenIssues:     issuesToAny(td.openIssues),
-		MergedPRs:      prsToAny(td.mergedPRs),
-		SprintPlanText: td.currentPlanText,
-		ExtractedGoals: goalTexts,
-		SprintMeta:     sprintMeta,
-	})
-
-	// 4. workload_estimation
-	members, _ := e.store.GetTeamMembers(ctx, teamID)
-	_, _ = e.pipeline.RunWorkloadEstimation(ctx, teamID, pipeline.WorkloadInput{
-		Members:            buildWorkloadMembers(members, td.openIssues, td.mergedPRs, td.commits),
-		SprintWindow:       sprintWindow(sprintMeta),
-		StandardSprintDays: 5,
-	})
-
-	// 5. velocity_analysis
 	closedCount := 0
 	for _, issue := range td.openIssues {
 		if issue.GetState() == "closed" {
 			closedCount++
 		}
 	}
-	_, _ = e.pipeline.RunVelocityAnalysis(ctx, teamID, pipeline.VelocityInput{
-		Sprints: []pipeline.VelocitySprint{
-			{
-				Label:        "current",
-				ClosedIssues: closedCount,
-				MergedPRs:    len(td.mergedPRs),
-				CommitCount:  len(td.commits),
+	phase1.Add(1)
+	go func() {
+		defer phase1.Done()
+		t0 := time.Now()
+		_, _ = e.pipeline.RunVelocityAnalysis(ctx, teamID, pipeline.VelocityInput{
+			Sprints: []pipeline.VelocitySprint{
+				{
+					Label:        "current",
+					ClosedIssues: closedCount,
+					MergedPRs:    len(td.mergedPRs),
+					CommitCount:  len(td.commits),
+				},
 			},
-		},
-	})
+		})
+		log.Printf("INFO  sync [team %d]: velocity_analysis done in %s", teamID, time.Since(t0).Round(time.Millisecond))
+	}()
 
+	phase1.Wait()
+	log.Printf("INFO  sync [team %d]: pipeline phase 1 done in %s", teamID, time.Since(p1Start).Round(time.Millisecond))
+
+	// Phase 2: pipelines that depend on phase 1 results.
+	p2Start := time.Now()
+	log.Printf("INFO  sync [team %d]: pipeline phase 2 start (team_status, workload)", teamID)
+	sprintMeta, _ := e.store.GetSprintMeta(ctx, teamID, "current")
+	members, _ := e.store.GetTeamMembers(ctx, teamID)
+
+	var phase2 sync.WaitGroup
+
+	if td.currentPlanText != "" || td.goalsDocText != "" {
+		phase2.Add(1)
+		go func() {
+			defer phase2.Done()
+			t0 := time.Now()
+			result, err := e.pipeline.RunTeamStatus(ctx, teamID, pipeline.TeamStatusInput{
+				GoalsDocText:   td.goalsDocText,
+				SprintPlanText: td.currentPlanText,
+				SprintMeta:     sprintMeta,
+				OpenIssues:     issuesToAny(td.openIssues),
+				MergedPRs:      prsToAny(td.mergedPRs),
+			})
+			if err != nil {
+				log.Printf("ERROR sync [team %d]: team_status: %v", teamID, err)
+				mu.Lock()
+				errs["team_status"] = err.Error()
+				mu.Unlock()
+				return
+			}
+			log.Printf("INFO  sync [team %d]: team_status done in %s", teamID, time.Since(t0).Round(time.Millisecond))
+			mu.Lock()
+			for _, g := range result.BusinessGoals {
+				goalTexts = append(goalTexts, g.Text)
+			}
+			mu.Unlock()
+		}()
+	}
+
+	if len(members) > 0 {
+		phase2.Add(1)
+		go func() {
+			defer phase2.Done()
+			t0 := time.Now()
+			_, _ = e.pipeline.RunWorkloadEstimation(ctx, teamID, pipeline.WorkloadInput{
+				Members:            buildWorkloadMembers(members, td.openIssues, td.mergedPRs, td.commits),
+				SprintWindow:       sprintWindow(sprintMeta),
+				StandardSprintDays: 5,
+			})
+			log.Printf("INFO  sync [team %d]: workload_estimation done in %s", teamID, time.Since(t0).Round(time.Millisecond))
+		}()
+	} else {
+		log.Printf("INFO  sync [team %d]: skipping workload_estimation (no team members)", teamID)
+	}
+
+	phase2.Wait()
+	log.Printf("INFO  sync [team %d]: pipeline phase 2 done in %s", teamID, time.Since(p2Start).Round(time.Millisecond))
 	return goalTexts
 }
 

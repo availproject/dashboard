@@ -34,16 +34,19 @@ type TeamMember struct {
 
 // SourceCatalogue represents a row in the source_catalogue table.
 type SourceCatalogue struct {
-	ID           int64
-	SourceType   string
-	ExternalID   string
-	Title        string
-	URL          sql.NullString
-	SourceMeta   sql.NullString
-	AISuggestion sql.NullString
-	Status       string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                int64
+	SourceType        string
+	ExternalID        string
+	Title             string
+	URL               sql.NullString
+	SourceMeta        sql.NullString
+	ParentID          sql.NullInt64
+	AISuggestion      sql.NullString
+	Status            string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	RawContent        sql.NullString
+	NotionLastEdited  sql.NullString
 }
 
 // SourceConfig represents a row in the source_configs table.
@@ -53,7 +56,7 @@ type SourceConfig struct {
 	TeamID      sql.NullInt64
 	Purpose     string
 	ConfigMeta  sql.NullString
-	CreatedAt   time.Time
+	Provenance  string
 }
 
 // Annotation represents a row in the annotations table.

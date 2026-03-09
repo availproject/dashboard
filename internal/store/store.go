@@ -18,7 +18,7 @@ type Store struct {
 // New opens the SQLite database at path, enables WAL mode and foreign keys,
 // runs all pending migrations, and returns a ready-to-use Store.
 func New(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_loc=auto")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}

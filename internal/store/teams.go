@@ -116,6 +116,40 @@ func (s *Store) DeleteMember(ctx context.Context, id int64) error {
 	return err
 }
 
+// UpsertMemberByName adds a team member with the given name if no member with
+// that name already exists on the team. It is a no-op otherwise.
+func (s *Store) UpsertMemberByName(ctx context.Context, teamID int64, name string) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM team_members WHERE team_id = ? AND name = ?`,
+		teamID, name,
+	).Scan(&count); err != nil || count > 0 {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO team_members (team_id, name) VALUES (?, ?)`,
+		teamID, name,
+	)
+	return err
+}
+
+// UpsertMemberByGithubLogin adds a team member with the given GitHub login if no
+// member with that login already exists on the team. It is a no-op otherwise.
+func (s *Store) UpsertMemberByGithubLogin(ctx context.Context, teamID int64, login, name string) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM team_members WHERE team_id = ? AND github_login = ?`,
+		teamID, login,
+	).Scan(&count); err != nil || count > 0 {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO team_members (team_id, name, github_login) VALUES (?, ?, ?)`,
+		teamID, name, login,
+	)
+	return err
+}
+
 // GetTeamMembers returns all members of the given team ordered by id.
 func (s *Store) GetTeamMembers(ctx context.Context, teamID int64) ([]*TeamMember, error) {
 	const q = `SELECT id, team_id, name, github_login, role, notion_user_id, created_at FROM team_members WHERE team_id = ? ORDER BY id`

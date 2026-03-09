@@ -63,5 +63,18 @@ func (d *Deps) handleGetSyncRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, run)
+	resp := struct {
+		ID     int64   `json:"ID"`
+		Status string  `json:"Status"`
+		Scope  string  `json:"Scope"`
+		Error  *string `json:"Error"`
+	}{
+		ID:     run.ID,
+		Status: run.Status,
+		Scope:  run.Scope,
+	}
+	if run.Error.Valid {
+		resp.Error = &run.Error.String
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

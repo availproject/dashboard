@@ -5,14 +5,77 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/your-org/dashboard/internal/connector"
 )
 
+// detectScope infers the discovery scope and normalises the target from a URL
+// or short-form string. It is used when the caller passes an empty scope.
+//
+// Supported inputs:
+//   - GitHub project URL:  https://github.com/orgs/{org}/projects/{n}[/...]
+//   - GitHub repo URL:     https://github.com/{owner}/{repo}
+//   - Notion URL:          https://www.notion.so/... or https://notion.so/...
+//   - Any other https URL: treated as metrics_url
+//   - org/N (N is integer): github_project, target normalised to "org/N"
+//   - owner/repo:           github_repo
+func detectScope(target string) (scope, resolved string, err error) {
+	if strings.HasPrefix(target, "https://github.com/orgs/") {
+		u, parseErr := url.Parse(target)
+		if parseErr == nil {
+			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+			// path: orgs/{org}/projects/{number}[/...]
+			if len(parts) >= 4 && parts[0] == "orgs" && parts[2] == "projects" {
+				return "github_project", parts[1] + "/" + parts[3], nil
+			}
+		}
+	}
+
+	if strings.HasPrefix(target, "https://github.com/") {
+		u, parseErr := url.Parse(target)
+		if parseErr == nil {
+			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+			if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+				return "github_repo", parts[0] + "/" + parts[1], nil
+			}
+		}
+	}
+
+	if strings.HasPrefix(target, "https://www.notion.so/") || strings.HasPrefix(target, "https://notion.so/") {
+		return "notion_workspace", target, nil
+	}
+
+	if strings.HasPrefix(target, "https://") || strings.HasPrefix(target, "http://") {
+		return "metrics_url", target, nil
+	}
+
+	// Plain "a/b" — if b is a pure integer, treat as org/project-number.
+	if parts := strings.SplitN(target, "/", 2); len(parts) == 2 {
+		if _, numErr := strconv.Atoi(parts[1]); numErr == nil {
+			return "github_project", target, nil
+		}
+		return "github_repo", target, nil
+	}
+
+	return "", "", fmt.Errorf("cannot detect source type from %q — paste a URL or use owner/repo format", target)
+}
+
 // Discover runs a discovery pass for the given scope and target.
+// If scope is empty, it is auto-detected from the target URL or short form.
 // It creates a sync_run record (status='running') and launches a background
 // goroutine to perform the actual work. Returns the syncRunID immediately.
 func (e *Engine) Discover(ctx context.Context, scope, target string) (int64, error) {
+	if scope == "" {
+		detected, resolved, err := detectScope(target)
+		if err != nil {
+			return 0, fmt.Errorf("discover: %w", err)
+		}
+		scope = detected
+		target = resolved
+	}
 	run, err := e.store.CreateSyncRun(ctx, sql.NullInt64{}, scope)
 	if err != nil {
 		return 0, fmt.Errorf("discover: create sync run: %w", err)
@@ -32,6 +95,8 @@ func (e *Engine) discoverBackground(runID int64, scope, target string) {
 		items, discoverErr = e.notion.Discover(ctx, target)
 	case "github_repo":
 		items, discoverErr = e.github.Discover(ctx, target)
+	case "github_project":
+		items, discoverErr = e.github.DiscoverProject(ctx, target)
 	case "metrics_url":
 		items, discoverErr = e.discoverMetrics(ctx, target)
 	default:
@@ -45,6 +110,10 @@ func (e *Engine) discoverBackground(runID int64, scope, target string) {
 		return
 	}
 
+	// idMap resolves (sourceType+externalID) → catalogue ID so children can
+	// reference their parent's DB id. Items must be ordered parents-first.
+	idMap := make(map[string]int64)
+
 	for _, item := range items {
 		metaStr := sql.NullString{}
 		if item.SourceMeta != nil {
@@ -53,10 +122,19 @@ func (e *Engine) discoverBackground(runID int64, scope, target string) {
 			}
 		}
 
-		catalogueItem, err := e.store.UpsertCatalogueItem(ctx,
+		var parentID sql.NullInt64
+		if item.ParentExternalID != "" && item.ParentSourceType != "" {
+			key := item.ParentSourceType + "\x00" + item.ParentExternalID
+			if pid, ok := idMap[key]; ok {
+				parentID = sql.NullInt64{Int64: pid, Valid: true}
+			}
+		}
+
+		result, err := e.store.UpsertCatalogueItem(ctx,
 			item.SourceType, item.ExternalID, item.Title,
 			sql.NullString{String: item.URL, Valid: item.URL != ""},
 			metaStr,
+			parentID,
 		)
 		if err != nil {
 			_ = e.store.UpdateSyncRun(ctx, runID, "failed", sql.NullString{
@@ -64,14 +142,7 @@ func (e *Engine) discoverBackground(runID int64, scope, target string) {
 			})
 			return
 		}
-
-		// Run discovery suggestion for new items (no AI suggestion yet).
-		if !catalogueItem.AISuggestion.Valid || catalogueItem.AISuggestion.String == "" {
-			result, err := e.pipeline.RunDiscoverySuggestion(ctx, item.Title, item.Excerpt)
-			if err == nil && result != nil {
-				_ = e.store.UpdateCatalogueAISuggestion(ctx, catalogueItem.ID, result.SuggestedPurpose)
-			}
-		}
+		idMap[item.SourceType+"\x00"+item.ExternalID] = result.ID
 	}
 
 	_ = e.store.UpdateSyncRun(ctx, runID, "completed", sql.NullString{})

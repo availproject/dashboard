@@ -210,26 +210,26 @@ func TestCatalogueCRUD(t *testing.T) {
 	s := newTestStore(t)
 
 	// UpsertCatalogueItem (insert)
-	item, err := s.UpsertCatalogueItem(ctx, "github_repo", "org/repo1", "Repo One",
+	item, err := s.UpsertCatalogueItem(ctx, "github_md_file", "org/repo1", "Repo One",
 		sql.NullString{String: "https://github.com/org/repo1", Valid: true},
-		sql.NullString{})
+		sql.NullString{}, sql.NullInt64{})
 	if err != nil {
 		t.Fatalf("UpsertCatalogueItem: %v", err)
 	}
 	if item.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if item.SourceType != "github_repo" {
-		t.Errorf("source_type: got %q, want %q", item.SourceType, "github_repo")
+	if item.SourceType != "github_md_file" {
+		t.Errorf("source_type: got %q, want %q", item.SourceType, "github_md_file")
 	}
 	if item.Status != "untagged" {
 		t.Errorf("status default: got %q, want %q", item.Status, "untagged")
 	}
 
 	// UpsertCatalogueItem (update on conflict)
-	item2, err := s.UpsertCatalogueItem(ctx, "github_repo", "org/repo1", "Repo One Updated",
+	item2, err := s.UpsertCatalogueItem(ctx, "github_md_file", "org/repo1", "Repo One Updated",
 		sql.NullString{String: "https://github.com/org/repo1", Valid: true},
-		sql.NullString{})
+		sql.NullString{}, sql.NullInt64{})
 	if err != nil {
 		t.Fatalf("UpsertCatalogueItem (update): %v", err)
 	}
@@ -251,7 +251,7 @@ func TestCatalogueCRUD(t *testing.T) {
 
 	// ListCatalogue
 	_, _ = s.UpsertCatalogueItem(ctx, "notion_page", "page-abc", "Page ABC",
-		sql.NullString{}, sql.NullString{})
+		sql.NullString{}, sql.NullString{}, sql.NullInt64{})
 	items, err := s.ListCatalogue(ctx)
 	if err != nil {
 		t.Fatalf("ListCatalogue: %v", err)
@@ -296,7 +296,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 
 	// Need a catalogue item and a team first.
 	item, err := s.UpsertCatalogueItem(ctx, "notion_page", "page-1", "Sprint Plan",
-		sql.NullString{}, sql.NullString{})
+		sql.NullString{}, sql.NullString{}, sql.NullInt64{})
 	if err != nil {
 		t.Fatalf("UpsertCatalogueItem: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 	teamID := sql.NullInt64{Int64: team.ID, Valid: true}
 
 	// UpsertSourceConfig (insert)
-	sc, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan", sql.NullString{})
+	sc, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan", sql.NullString{}, "manual")
 	if err != nil {
 		t.Fatalf("UpsertSourceConfig: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 	}
 
 	// UpsertSourceConfig (idempotent - returns existing)
-	sc2, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan", sql.NullString{})
+	sc2, err := s.UpsertSourceConfig(ctx, item.ID, teamID, "current_plan", sql.NullString{}, "manual")
 	if err != nil {
 		t.Fatalf("UpsertSourceConfig (idempotent): %v", err)
 	}
@@ -332,7 +332,7 @@ func TestSourceConfigCRUD(t *testing.T) {
 	}
 
 	// UpsertSourceConfig (org-level, team_id IS NULL)
-	orgConfig, err := s.UpsertSourceConfig(ctx, item.ID, sql.NullInt64{}, "org_goals", sql.NullString{})
+	orgConfig, err := s.UpsertSourceConfig(ctx, item.ID, sql.NullInt64{}, "org_goals", sql.NullString{}, "manual")
 	if err != nil {
 		t.Fatalf("UpsertSourceConfig (org): %v", err)
 	}

@@ -14,7 +14,9 @@ import (
 type SyncEngine interface {
 	Sync(ctx context.Context, scope string, teamID *int64) (int64, error)
 	Discover(ctx context.Context, scope, target string) (int64, error)
+	Classify(ctx context.Context, itemIDs []int64) (int64, error)
 	AutoTag(ctx context.Context) error
+	HomepageExtract(ctx context.Context, teamID int64) (int64, error)
 }
 
 // PipelineRunner is the interface the API layer uses to invoke pipelines.
@@ -49,6 +51,7 @@ func NewRouter(deps *Deps) http.Handler {
 		r.Get("/teams/{id}/workload", deps.handleTeamWorkload)
 		r.Get("/teams/{id}/velocity", deps.handleTeamVelocity)
 		r.Get("/teams/{id}/metrics", deps.handleTeamMetrics)
+		r.Get("/teams/{id}/config", deps.handleGetTeamConfig)
 		r.Get("/sync/{run_id}", deps.handleGetSyncRun)
 		r.Get("/config/sources", deps.handleListSources)
 		r.Get("/config/annotations", deps.handleListConfigAnnotations)
@@ -59,7 +62,12 @@ func NewRouter(deps *Deps) http.Handler {
 
 			r.Post("/sync", deps.handlePostSync)
 			r.Post("/config/sources/discover", deps.handleDiscover)
+			r.Post("/config/sources/classify", deps.handleClassify)
 			r.Put("/config/sources/{id}", deps.handleUpdateSource)
+			r.Delete("/config/sources/{id}/config/{config_id}", deps.handleDeleteSourceConfig)
+
+			r.Post("/teams/{id}/homepage", deps.handleSetTeamHomepage)
+			r.Post("/teams/{id}/config/reextract", deps.handleTeamReextract)
 
 			r.Post("/config/annotations", deps.handleCreateConfigAnnotation)
 			r.Put("/config/annotations/{id}", deps.handleUpdateConfigAnnotation)
@@ -82,6 +90,7 @@ func NewRouter(deps *Deps) http.Handler {
 			r.Delete("/annotations/{id}", deps.handleDeleteAnnotation)
 
 			r.Get("/admin/autotag", deps.handleAdminAutotag)
+			r.Delete("/admin/ai-cache", deps.handleAdminClearAICache)
 		})
 	})
 

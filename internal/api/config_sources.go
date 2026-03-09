@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/your-org/dashboard/internal/store"
@@ -19,15 +20,16 @@ type sourceConfigResponse struct {
 }
 
 type sourceItemResponse struct {
-	ID                int64                  `json:"id"`
-	SourceType        string                 `json:"source_type"`
-	ExternalID        string                 `json:"external_id"`
-	Title             string                 `json:"title"`
-	URL               *string                `json:"url,omitempty"`
-	SourceMeta        *string                `json:"source_meta,omitempty"`
-	AISuggestedPurpose *string               `json:"ai_suggested_purpose,omitempty"`
-	Status            string                 `json:"status"`
-	Configs           []sourceConfigResponse `json:"configs"`
+	ID                 int64                  `json:"id"`
+	SourceType         string                 `json:"source_type"`
+	ExternalID         string                 `json:"external_id"`
+	Title              string                 `json:"title"`
+	URL                *string                `json:"url,omitempty"`
+	SourceMeta         *string                `json:"source_meta,omitempty"`
+	ParentID           *int64                 `json:"parent_id,omitempty"`
+	AISuggestedPurpose *string                `json:"ai_suggested_purpose,omitempty"`
+	Status             string                 `json:"status"`
+	Configs            []sourceConfigResponse `json:"configs"`
 }
 
 func (d *Deps) handleListSources(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +39,19 @@ func (d *Deps) handleListSources(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list catalogue: "+err.Error())
 		return
+	}
+
+	// Optional source_type filter (comma-separated).
+	sourceTypeFilter := r.URL.Query().Get("source_type")
+	var allowedTypes map[string]bool
+	if sourceTypeFilter != "" {
+		allowedTypes = make(map[string]bool)
+		for _, t := range strings.Split(sourceTypeFilter, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				allowedTypes[t] = true
+			}
+		}
 	}
 
 	configs, err := d.Store.ListSourceConfigs(ctx)
@@ -64,6 +79,9 @@ func (d *Deps) handleListSources(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]sourceItemResponse, 0, len(items))
 	for _, item := range items {
+		if allowedTypes != nil && !allowedTypes[item.SourceType] {
+			continue
+		}
 		resp := sourceItemResponse{
 			ID:         item.ID,
 			SourceType: item.SourceType,
@@ -81,6 +99,10 @@ func (d *Deps) handleListSources(w http.ResponseWriter, r *http.Request) {
 		if item.SourceMeta.Valid {
 			resp.SourceMeta = &item.SourceMeta.String
 		}
+		if item.ParentID.Valid {
+			v := item.ParentID.Int64
+			resp.ParentID = &v
+		}
 		if item.AISuggestion.Valid {
 			resp.AISuggestedPurpose = &item.AISuggestion.String
 		}
@@ -88,6 +110,21 @@ func (d *Deps) handleListSources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// --- DELETE /config/sources/{id}/config/{config_id} ---
+
+func (d *Deps) handleDeleteSourceConfig(w http.ResponseWriter, r *http.Request) {
+	configID, err := strconv.ParseInt(chi.URLParam(r, "config_id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid config_id")
+		return
+	}
+	if err := d.Store.DeleteSourceConfig(r.Context(), configID); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete source config: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- PUT /config/sources/{id} ---
@@ -153,7 +190,7 @@ func (d *Deps) handleUpdateSource(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if _, err := d.Store.UpsertSourceConfig(ctx, id, teamID, req.Purpose, configMeta); err != nil {
+		if _, err := d.Store.UpsertSourceConfig(ctx, id, teamID, req.Purpose, configMeta, "manual"); err != nil {
 			writeError(w, http.StatusInternalServerError, "upsert source config: "+err.Error())
 			return
 		}
@@ -195,6 +232,10 @@ func catalogueItemToResponse(item *store.SourceCatalogue, configs []*store.Sourc
 	if item.SourceMeta.Valid {
 		resp.SourceMeta = &item.SourceMeta.String
 	}
+	if item.ParentID.Valid {
+		v := item.ParentID.Int64
+		resp.ParentID = &v
+	}
 	if item.AISuggestion.Valid {
 		resp.AISuggestedPurpose = &item.AISuggestion.String
 	}
@@ -212,6 +253,28 @@ func catalogueItemToResponse(item *store.SourceCatalogue, configs []*store.Sourc
 	return resp
 }
 
+func (d *Deps) handleClassify(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ItemIDs []int64 `json:"item_ids"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.ItemIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "item_ids is required")
+		return
+	}
+
+	syncRunID, err := d.Engine.Classify(r.Context(), body.ItemIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]int64{"sync_run_id": syncRunID})
+}
+
 func (d *Deps) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Scope  string `json:"scope"`
@@ -219,10 +282,6 @@ func (d *Deps) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.Scope == "" {
-		writeError(w, http.StatusBadRequest, "scope is required")
 		return
 	}
 	if body.Target == "" {

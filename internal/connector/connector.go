@@ -21,13 +21,20 @@ func NewErrCredentialsMissing(varName string) error {
 }
 
 // DiscoveredItem represents a single item discovered from an external source.
+// ParentExternalID + ParentSourceType identify the parent item if this item
+// is a child of another discovered item (e.g. a label under a repo, or a
+// child Notion page under its parent). Both fields must be set together.
+// Items must be emitted parents-before-children for the discovery loop to
+// correctly resolve parent catalogue IDs.
 type DiscoveredItem struct {
-	SourceType string
-	ExternalID string
-	Title      string
-	URL        string
-	SourceMeta map[string]any
-	Excerpt    string
+	SourceType       string
+	ExternalID       string
+	Title            string
+	URL              string
+	SourceMeta       map[string]any
+	Excerpt          string
+	ParentExternalID string
+	ParentSourceType string
 }
 
 // Discoverer is implemented by each source connector that supports discovery.

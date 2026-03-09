@@ -44,6 +44,23 @@ func (s *Store) SetCacheEntry(ctx context.Context, inputHash, pipeline string, t
 	return s.getCacheByID(ctx, id)
 }
 
+// ClearAICache deletes all AI cache entries, optionally filtered by pipeline name.
+// If pipeline is empty, all entries are deleted.
+func (s *Store) ClearAICache(ctx context.Context, pipeline string) (int64, error) {
+	var res sql.Result
+	var err error
+	if pipeline == "" {
+		res, err = s.db.ExecContext(ctx, `DELETE FROM ai_cache`)
+	} else {
+		res, err = s.db.ExecContext(ctx, `DELETE FROM ai_cache WHERE pipeline = ?`, pipeline)
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // PruneStaleCache deletes cache entries older than the given duration.
 func (s *Store) PruneStaleCache(ctx context.Context, olderThan time.Duration) error {
 	cutoff := time.Now().UTC().Add(-olderThan).Format("2006-01-02 15:04:05")

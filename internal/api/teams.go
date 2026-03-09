@@ -133,7 +133,7 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 				resp.Goals = sp.Goals
 			}
 
-			// Compute current_sprint from start_date if available
+			// Compute current_sprint from start_date if available; fall back to AI count.
 			if sp.StartDate != nil && *sp.StartDate != "" {
 				t, parseErr := time.Parse("2006-01-02", *sp.StartDate)
 				if parseErr == nil {
@@ -148,7 +148,11 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 				}
 			} else {
 				resp.CurrentSprint = sp.CurrentSprint
-				// StartDateMissing already defaults to true; leave it
+			}
+			// If the AI successfully identified a sprint number, suppress the missing-date
+			// warning — teams that track sprints by number don't need calendar dates.
+			if sp.CurrentSprint > 0 {
+				resp.StartDateMissing = false
 			}
 		}
 	}
@@ -173,9 +177,16 @@ func (d *Deps) handleTeamSprint(w http.ResponseWriter, r *http.Request) {
 
 // --- GET /teams/{id}/goals ---
 
-type teamGoalItem struct {
+type teamBusinessGoalItem struct {
 	Text   string `json:"text"`
-	Source string `json:"source"`
+	Status string `json:"status"`
+	Note   string `json:"note"`
+}
+
+type teamSprintGoalItem struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
+	Note   string `json:"note"`
 }
 
 type teamConcernItem struct {
@@ -183,13 +194,16 @@ type teamConcernItem struct {
 	Summary      string  `json:"summary"`
 	Explanation  string  `json:"explanation"`
 	Severity     string  `json:"severity"`
+	Scope        string  `json:"scope"`
 	AnnotationID *int64  `json:"annotation_id"`
 }
 
 type teamGoalsResponse struct {
-	Goals        []teamGoalItem    `json:"goals"`
-	Concerns     []teamConcernItem `json:"concerns"`
-	LastSyncedAt *string           `json:"last_synced_at"`
+	BusinessGoals  []teamBusinessGoalItem `json:"business_goals"`
+	SprintGoals    []teamSprintGoalItem   `json:"sprint_goals"`
+	SprintForecast string                 `json:"sprint_forecast"`
+	Concerns       []teamConcernItem      `json:"concerns"`
+	LastSyncedAt   *string                `json:"last_synced_at"`
 }
 
 func (d *Deps) handleTeamGoals(w http.ResponseWriter, r *http.Request) {
@@ -202,43 +216,49 @@ func (d *Deps) handleTeamGoals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := teamGoalsResponse{
-		Goals:    []teamGoalItem{},
-		Concerns: []teamConcernItem{},
+		BusinessGoals: []teamBusinessGoalItem{},
+		SprintGoals:   []teamSprintGoalItem{},
+		Concerns:      []teamConcernItem{},
 	}
 
 	teamNullID := sql.NullInt64{Int64: teamID, Valid: true}
 
-	// Load goal_extraction cache
-	goalsCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.GoalExtractionPipeline, teamNullID)
+	// Load team_status cache
+	cache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.TeamStatusPipeline, teamNullID)
 	if err == nil {
-		var gr pipeline.GoalExtractionResult
-		if json.Unmarshal([]byte(goalsCache.Output), &gr) == nil {
-			for _, g := range gr.Goals {
-				resp.Goals = append(resp.Goals, teamGoalItem{Text: g.Text, Source: g.Source})
+		var ts pipeline.TeamStatusResult
+		if json.Unmarshal([]byte(cache.Output), &ts) == nil {
+			for _, g := range ts.BusinessGoals {
+				resp.BusinessGoals = append(resp.BusinessGoals, teamBusinessGoalItem{
+					Text:   g.Text,
+					Status: g.Status,
+					Note:   g.Note,
+				})
 			}
-		}
-	}
+			for _, g := range ts.SprintGoals {
+				resp.SprintGoals = append(resp.SprintGoals, teamSprintGoalItem{
+					Text:   g.Text,
+					Status: g.Status,
+					Note:   g.Note,
+				})
+			}
+			resp.SprintForecast = ts.SprintForecast
 
-	// Build item_ref → annotation_id map for concern linking
-	annotations, _ := d.Store.ListAnnotations(ctx, teamNullID)
-	annotationByRef := map[string]int64{}
-	for _, a := range annotations {
-		if a.ItemRef.Valid && a.Archived == 0 {
-			annotationByRef[a.ItemRef.String] = a.ID
-		}
-	}
-
-	// Load concerns cache
-	concernsCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.ConcernsPipeline, teamNullID)
-	if err == nil {
-		var cr pipeline.ConcernsResult
-		if json.Unmarshal([]byte(concernsCache.Output), &cr) == nil {
-			for _, c := range cr.Concerns {
+			// Build item_ref → annotation_id map for concern linking
+			annotations, _ := d.Store.ListAnnotations(ctx, teamNullID)
+			annotationByRef := map[string]int64{}
+			for _, a := range annotations {
+				if a.ItemRef.Valid && a.Archived == 0 {
+					annotationByRef[a.ItemRef.String] = a.ID
+				}
+			}
+			for _, c := range ts.Concerns {
 				item := teamConcernItem{
 					Key:         c.Key,
 					Summary:     c.Summary,
 					Explanation: c.Explanation,
 					Severity:    c.Severity,
+					Scope:       c.Scope,
 				}
 				if id, ok := annotationByRef[c.Key]; ok {
 					item.AnnotationID = &id

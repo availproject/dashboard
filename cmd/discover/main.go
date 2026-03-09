@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run ./cmd/discover notion_workspace
+//	go run ./cmd/discover notion_workspace https://www.notion.so/workspace/Project-abc123
 //	go run ./cmd/discover github_repo owner/repo
 //	go run ./cmd/discover metrics_url https://grafana.example.com/d/abc123
 package main
@@ -42,6 +42,10 @@ func main() {
 
 	switch scope {
 	case "notion_workspace":
+		if target == "" {
+			fmt.Fprintln(os.Stderr, "notion_workspace requires a target: Notion page URL")
+			os.Exit(1)
+		}
 		runNotion(ctx, target)
 	case "github_repo":
 		if target == "" {

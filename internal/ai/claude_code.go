@@ -29,6 +29,7 @@ func (c *ClaudeCodeProvider) Generate(ctx context.Context, prompt string) (strin
 		"--print",
 		"--dangerously-skip-permissions",
 		"--output-format", "stream-json",
+		"--verbose",
 	}
 	if c.model != "" {
 		args = append(args, "--model", c.model)
@@ -70,13 +71,19 @@ func (c *ClaudeCodeProvider) Generate(ctx context.Context, prompt string) (strin
 		}
 		return "", fmt.Errorf("claude-code: %w", err)
 	}
-	return output.String(), nil
+	return stripCodeFence(output.String()), nil
 }
 
 func parseStreamJSON(r io.Reader, out *strings.Builder) {
 	scanner := bufio.NewScanner(r)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
+
+	// result event contains the complete final text; content_block_delta events
+	// are streaming chunks. With --verbose both are present, so we must prefer
+	// result (authoritative) and ignore deltas when a result is found.
+	var finalResult string
+	var streaming strings.Builder
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -96,14 +103,37 @@ func parseStreamJSON(r io.Reader, out *strings.Builder) {
 		switch event.Type {
 		case "result":
 			if event.Result != "" {
-				out.WriteString(event.Result)
+				finalResult = event.Result
 			}
 		case "content_block_delta":
 			if t := event.Delta.Text; t != "" {
-				out.WriteString(t)
+				streaming.WriteString(t)
 			}
 		}
 	}
+
+	if finalResult != "" {
+		out.WriteString(finalResult)
+	} else {
+		out.WriteString(streaming.String())
+	}
+}
+
+// stripCodeFence removes markdown code fences (e.g. ```json ... ```) from s.
+func stripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Drop the opening fence line (```json or just ```).
+	if idx := strings.Index(s, "\n"); idx >= 0 {
+		s = s[idx+1:]
+	}
+	// Drop the closing fence.
+	if idx := strings.LastIndex(s, "```"); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }
 
 func drainReader(r io.Reader, buf *strings.Builder) {

@@ -45,7 +45,7 @@ func (v *GoalsView) totalItems() int {
 	if v.data == nil {
 		return 0
 	}
-	return len(v.data.Goals) + len(v.data.Concerns)
+	return len(v.data.BusinessGoals) + len(v.data.SprintGoals) + len(v.data.Concerns)
 }
 
 // Update implements tea.Model.
@@ -83,14 +83,20 @@ func (v *GoalsView) pushAnnotate() tea.Cmd {
 	if v.data == nil || v.totalItems() == 0 {
 		return nil
 	}
-	nGoals := len(v.data.Goals)
+	nBiz := len(v.data.BusinessGoals)
+	nSprint := len(v.data.SprintGoals)
 	var itemRef, label string
-	if v.cursor < nGoals {
-		g := v.data.Goals[v.cursor]
+	switch {
+	case v.cursor < nBiz:
+		g := v.data.BusinessGoals[v.cursor]
 		itemRef = g.Text
 		label = g.Text
-	} else {
-		c := v.data.Concerns[v.cursor-nGoals]
+	case v.cursor < nBiz+nSprint:
+		g := v.data.SprintGoals[v.cursor-nBiz]
+		itemRef = g.Text
+		label = g.Text
+	default:
+		c := v.data.Concerns[v.cursor-nBiz-nSprint]
 		itemRef = c.Key
 		label = c.Summary
 	}
@@ -122,24 +128,44 @@ func (v *GoalsView) View() string {
 
 	idx := 0
 
-	// Goals section
-	sb.WriteString(selectedStyle.Render("  Goals") + "\n")
-	if len(v.data.Goals) == 0 {
+	// Business goals section
+	sb.WriteString(selectedStyle.Render("  Business Goals") + "\n")
+	if len(v.data.BusinessGoals) == 0 {
 		sb.WriteString(dimStyle.Render("    (none)") + "\n")
 	} else {
-		for _, g := range v.data.Goals {
+		for _, g := range v.data.BusinessGoals {
 			prefix := "    "
-			text := "• " + g.Text
+			badge := goalStatusBadge(g.Status)
+			text := badge + " " + g.Text
 			if idx == v.cursor {
 				prefix = "  > "
-				text = selectedStyle.Render(text)
+				text = selectedStyle.Render(badge + " " + g.Text)
 			}
 			sb.WriteString(prefix + text + "\n")
 			idx++
 		}
 	}
 
-	// Divider
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	// Sprint goals section
+	sb.WriteString(selectedStyle.Render("  Sprint Goals") + "\n")
+	if len(v.data.SprintGoals) == 0 {
+		sb.WriteString(dimStyle.Render("    (none)") + "\n")
+	} else {
+		for _, g := range v.data.SprintGoals {
+			prefix := "    "
+			badge := sprintGoalStatusBadge(g.Status)
+			text := badge + " " + g.Text
+			if idx == v.cursor {
+				prefix = "  > "
+				text = selectedStyle.Render(badge + " " + g.Text)
+			}
+			sb.WriteString(prefix + text + "\n")
+			idx++
+		}
+	}
+
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// Concerns section

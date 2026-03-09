@@ -118,6 +118,14 @@ func (r *Runner) RunSprintParse(ctx context.Context, teamID int64, sprintPlanTex
 		return nil, fmt.Errorf("sprint_parse: upsert sprint meta: %w", err)
 	}
 
+	// Auto-add team members found in the sprint doc.
+	for _, m := range result.Members {
+		if m.Name == "" {
+			continue
+		}
+		_ = r.store.UpsertMemberByName(ctx, teamID, m.Name)
+	}
+
 	return &result, nil
 }
 
@@ -198,6 +206,28 @@ func (r *Runner) RunVelocityAnalysis(ctx context.Context, teamID int64, input Ve
 	return &result, nil
 }
 
+// RunTeamStatus runs the team_status pipeline, replacing goal_extraction + concerns.
+func (r *Runner) RunTeamStatus(ctx context.Context, teamID int64, input TeamStatusInput) (*TeamStatusResult, error) {
+	annotations, err := r.activeAnnotations(ctx, &teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result TeamStatusResult
+	if err := r.generate(ctx, TeamStatusPipeline, teamStatusSchema, &teamID,
+		map[string]any{
+			"goals_doc_text":   input.GoalsDocText,
+			"sprint_plan_text": input.SprintPlanText,
+			"sprint_meta":      input.SprintMeta,
+			"open_issues":      input.OpenIssues,
+			"merged_prs":       input.MergedPRs,
+		},
+		annotations, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // RunGoalAlignment runs the goal_alignment pipeline (org-level; no teamID).
 func (r *Runner) RunGoalAlignment(ctx context.Context, orgGoalsText string, teamGoals map[int64][]string) (*AlignmentResult, error) {
 	annotations, err := r.activeAnnotations(ctx, nil)
@@ -229,4 +259,22 @@ func (r *Runner) RunDiscoverySuggestion(ctx context.Context, title, excerpt stri
 		return nil, err
 	}
 	return &result, nil
+}
+
+// RunLabelMatch runs the label_match pipeline: given a list of team names and
+// label infos, returns one LabelMatchItem per label with the matched team name
+// (or "unknown"). All labels are classified in a single AI call.
+func (r *Runner) RunLabelMatch(ctx context.Context, teamNames []string, labels []LabelInfo) ([]LabelMatchItem, error) {
+	var result struct {
+		Matches []LabelMatchItem `json:"matches"`
+	}
+	if err := r.generate(ctx, LabelMatchPipeline, labelMatchSchema, nil,
+		map[string]any{
+			"teams":  teamNames,
+			"labels": labels,
+		},
+		nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Matches, nil
 }

@@ -25,8 +25,10 @@ type mockEngine struct {
 func (m *mockEngine) Sync(_ context.Context, _ string, _ *int64) (int64, error) {
 	return m.syncRunID, m.syncErr
 }
-func (m *mockEngine) Discover(_ context.Context, _, _ string) (int64, error) { return 0, nil }
-func (m *mockEngine) AutoTag(_ context.Context) error                        { return nil }
+func (m *mockEngine) Discover(_ context.Context, _, _ string) (int64, error)  { return 0, nil }
+func (m *mockEngine) Classify(_ context.Context, _ []int64) (int64, error)    { return 0, nil }
+func (m *mockEngine) AutoTag(_ context.Context) error                          { return nil }
+func (m *mockEngine) HomepageExtract(_ context.Context, _ int64) (int64, error) { return 0, nil }
 
 func newTestDeps(t *testing.T) (*Deps, *store.Store, string) {
 	t.Helper()

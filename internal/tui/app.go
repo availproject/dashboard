@@ -133,6 +133,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.PopViewMsg:
 		if len(a.views) > 1 {
 			a.views = a.views[:len(a.views)-1]
+			return a, a.views[len(a.views)-1].Init()
 		}
 		return a, nil
 

@@ -280,10 +280,18 @@ type SprintResponse struct {
 	LastSyncedAt      *string  `json:"last_synced_at"`
 }
 
-// GoalItem is a single goal in GoalsResponse.
-type GoalItem struct {
+// BusinessGoalItem is a business-level goal with a status assessment.
+type BusinessGoalItem struct {
 	Text   string `json:"text"`
-	Source string `json:"source"`
+	Status string `json:"status"` // on_track|at_risk|behind
+	Note   string `json:"note"`
+}
+
+// SprintGoalItem is a sprint-level goal with a completion forecast.
+type SprintGoalItem struct {
+	Text   string `json:"text"`
+	Status string `json:"status"` // likely_done|at_risk|unclear
+	Note   string `json:"note"`
 }
 
 // ConcernItem is a single concern in GoalsResponse.
@@ -292,14 +300,17 @@ type ConcernItem struct {
 	Summary      string  `json:"summary"`
 	Explanation  string  `json:"explanation"`
 	Severity     string  `json:"severity"`
+	Scope        string  `json:"scope"` // strategic|sprint
 	AnnotationID *int64  `json:"annotation_id"`
 }
 
 // GoalsResponse is returned by GetGoals.
 type GoalsResponse struct {
-	Goals        []GoalItem    `json:"goals"`
-	Concerns     []ConcernItem `json:"concerns"`
-	LastSyncedAt *string       `json:"last_synced_at"`
+	BusinessGoals  []BusinessGoalItem `json:"business_goals"`
+	SprintGoals    []SprintGoalItem   `json:"sprint_goals"`
+	SprintForecast string             `json:"sprint_forecast"`
+	Concerns       []ConcernItem      `json:"concerns"`
+	LastSyncedAt   *string            `json:"last_synced_at"`
 }
 
 // WorkloadMember is a member entry in WorkloadResponse.
@@ -383,9 +394,30 @@ type SourceItemResponse struct {
 	ExternalID         string                 `json:"external_id"`
 	Title              string                 `json:"title"`
 	URL                *string                `json:"url"`
+	ParentID           *int64                 `json:"parent_id"`
 	AISuggestedPurpose *string                `json:"ai_suggested_purpose"`
 	Status             string                 `json:"status"`
+	Provenance         string                 `json:"provenance"`
 	Configs            []SourceConfigResponse `json:"configs"`
+}
+
+// TeamConfigSlotItem represents a single configured source in a slot.
+type TeamConfigSlotItem struct {
+	ID           int64   `json:"id"`
+	CatalogueID  int64   `json:"catalogue_id"`
+	Title        string  `json:"title"`
+	SourceType   string  `json:"source_type"`
+	URL          *string `json:"url,omitempty"`
+	Provenance   string  `json:"provenance"`
+	SprintStatus *string `json:"sprint_status,omitempty"`
+}
+
+// TeamConfigSlotsResponse mirrors the API response for GET /teams/{id}/config.
+type TeamConfigSlotsResponse struct {
+	TeamID           int64                          `json:"team_id"`
+	TeamName         string                         `json:"team_name"`
+	ExtractionStatus string                         `json:"extraction_status"`
+	Slots            map[string][]TeamConfigSlotItem `json:"slots"`
 }
 
 // GroupedAnnotationsResponse is returned by GetConfigAnnotations.
@@ -601,8 +633,13 @@ func (c *Client) DeleteAnnotation(id int64) error {
 }
 
 // GetConfigSources returns all catalogue items with their source configs.
-func (c *Client) GetConfigSources() ([]SourceItemResponse, error) {
-	resp, err := c.doRequest("GET", c.serverAddr+"/config/sources", nil)
+// Optional sourceTypes filters items by source_type (comma-separated in query param).
+func (c *Client) GetConfigSources(sourceTypes ...string) ([]SourceItemResponse, error) {
+	url := c.serverAddr + "/config/sources"
+	if len(sourceTypes) > 0 {
+		url += "?source_type=" + strings.Join(sourceTypes, ",")
+	}
+	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +648,65 @@ func (c *Client) GetConfigSources() ([]SourceItemResponse, error) {
 	}
 	var result []SourceItemResponse
 	return result, decodeJSON(resp, &result)
+}
+
+// DeleteSourceConfig removes a specific source config entry.
+func (c *Client) DeleteSourceConfig(catalogueID, configID int64) error {
+	resp, err := c.doRequest("DELETE",
+		fmt.Sprintf("%s/config/sources/%d/config/%d", c.serverAddr, catalogueID, configID), nil)
+	if err != nil {
+		return err
+	}
+	return checkStatus(resp, http.StatusNoContent)
+}
+
+// GetTeamConfig returns the slot config for a team.
+func (c *Client) GetTeamConfig(teamID int64) (*TeamConfigSlotsResponse, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("%s/teams/%d/config", c.serverAddr, teamID), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result TeamConfigSlotsResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// PostTeamHomepage sets the homepage for a team and triggers extraction.
+// Returns the sync_run_id.
+func (c *Client) PostTeamHomepage(teamID int64, catalogueID int64) (int64, error) {
+	body, err := json.Marshal(map[string]int64{"catalogue_id": catalogueID})
+	if err != nil {
+		return 0, err
+	}
+	resp, err := c.doRequest("POST", fmt.Sprintf("%s/teams/%d/homepage", c.serverAddr, teamID), body)
+	if err != nil {
+		return 0, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return 0, err
+	}
+	var result struct {
+		SyncRunID int64 `json:"sync_run_id"`
+	}
+	return result.SyncRunID, decodeJSON(resp, &result)
+}
+
+// PostTeamReextract re-runs homepage extraction for a team.
+// Returns the sync_run_id.
+func (c *Client) PostTeamReextract(teamID int64) (int64, error) {
+	resp, err := c.doRequest("POST", fmt.Sprintf("%s/teams/%d/config/reextract", c.serverAddr, teamID), nil)
+	if err != nil {
+		return 0, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return 0, err
+	}
+	var result struct {
+		SyncRunID int64 `json:"sync_run_id"`
+	}
+	return result.SyncRunID, decodeJSON(resp, &result)
 }
 
 // PutConfigSource updates a source config entry.
@@ -629,6 +725,25 @@ func (c *Client) PutConfigSource(id int64, status string, teamID *int64, purpose
 		return err
 	}
 	return checkStatus(resp, http.StatusOK, http.StatusNoContent)
+}
+
+// PostClassify triggers an AI classification run for the given catalogue item IDs.
+func (c *Client) PostClassify(itemIDs []int64) (int64, error) {
+	body, err := json.Marshal(map[string]any{"item_ids": itemIDs})
+	if err != nil {
+		return 0, err
+	}
+	resp, err := c.doRequest("POST", c.serverAddr+"/config/sources/classify", body)
+	if err != nil {
+		return 0, err
+	}
+	if err := checkStatus(resp, http.StatusAccepted); err != nil {
+		return 0, err
+	}
+	var result struct {
+		SyncRunID int64 `json:"sync_run_id"`
+	}
+	return result.SyncRunID, decodeJSON(resp, &result)
 }
 
 // PostDiscover triggers a discovery run.
