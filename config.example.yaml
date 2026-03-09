@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8081
 
 storage:
   path: ./dashboard.db
@@ -14,3 +14,6 @@ ai:
   model: claude-opus-4-6
   api_key: ""
   binary_path: claude
+
+mcp:
+  api_key: ""   # static Bearer token for /mcp endpoint; leave empty to disable auth

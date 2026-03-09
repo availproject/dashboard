@@ -10,8 +10,8 @@ Two binaries communicate over a local HTTP API:
 - **`cmd/tui`** — Bubble Tea terminal UI. Connects to the server and renders the dashboard views.
 
 ```
-cmd/server      →  :8080 (REST API)
-cmd/tui         →  connects to localhost:8080
+cmd/server      →  :8081 (REST API + MCP endpoint)
+cmd/tui         →  connects to localhost:8081
 ```
 
 ## Features
@@ -23,6 +23,7 @@ cmd/tui         →  connects to localhost:8080
 - **AI analysis** — sprint concerns, goal alignment, and workload summaries via Claude (cached by input hash)
 - **Annotations** — per-item and per-team notes that persist across sprints
 - **Config TUI** — manage teams, members, sources, annotations, and users from the terminal
+- **MCP server** — expose all dashboard data to Claude Desktop or any MCP client via `/mcp`
 
 ## Prerequisites
 
@@ -63,7 +64,7 @@ Edit `config.yaml`:
 
 ```yaml
 server:
-  port: 8080
+  port: 8081
 
 storage:
   path: ./dashboard.db
@@ -78,6 +79,9 @@ ai:
   model: claude-opus-4-6
   api_key: ""                # required for anthropic provider
   binary_path: claude        # required for claude-code provider
+
+mcp:
+  api_key: ""                # static Bearer token for /mcp; leave empty to disable auth
 ```
 
 **AI providers:**
@@ -121,6 +125,53 @@ go run ./cmd/tui
 5. Trigger a **Sync** to pull the latest data.
 6. Browse the org overview and team dashboards.
 
+## MCP Server
+
+The server exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `/mcp` (Streamable HTTP transport). This lets Claude Desktop — or any MCP-compatible client — query your dashboard data conversationally.
+
+### Available tools
+
+| Tool | Args | Description |
+|------|------|-------------|
+| `list_teams` | — | All teams with IDs and member counts. Start here. |
+| `get_org_snapshot` | — | Cross-team sprint progress, risk levels, workload, and goal alignment. |
+| `get_team_status` | `team_id` | Full status for one team: sprint, goals, concerns, workload, velocity, metrics. |
+| `get_team_members` | `team_id` | Roster with roles, GitHub usernames, and Notion user IDs. |
+| `search_annotations` | `team_id?`, `query?` | Search manual annotations and flags across the system. |
+| `get_sync_status` | `team_id?` | When data was last refreshed per team. |
+| `trigger_sync` | `scope`, `team_id?` | Start a data refresh. Returns a `sync_run_id` to poll. |
+
+### Connecting Claude Desktop
+
+The server must be reachable from the machine running Claude Desktop. On the same machine, use `localhost`. Over a private network (e.g. Tailscale), use the hostname directly — HTTP is fine since Tailscale encrypts traffic at the network layer.
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "dashboard": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://<host>:8081/mcp",
+        "--header",
+        "Authorization:Bearer <your-mcp-api-key>",
+        "--allow-http"
+      ]
+    }
+  }
+}
+```
+
+Replace `<host>` with `localhost` or your server's hostname (e.g. a Tailscale name), and `<your-mcp-api-key>` with the value from `config.yaml mcp.api_key`. The `--allow-http` flag is required for non-localhost URLs; omit it if connecting to localhost.
+
+Restart Claude Desktop after editing the config. The tools appear in **Settings → Developer**.
+
+### Authentication
+
+Set `mcp.api_key` in `config.yaml` to a random string. The endpoint requires `Authorization: Bearer <key>` on every request. Leave the key empty to disable authentication (only appropriate on a fully trusted network).
+
 ## User Management
 
 Users are managed by admins in the **Config > Users** TUI section. Two roles are available:
@@ -146,15 +197,16 @@ There is no self-registration.
 cmd/
   server/       main entry point for the API server
   tui/          main entry point for the terminal UI
+  discover/     diagnostic CLI for inspecting discovered sources
 internal/
-  api/          HTTP handlers and router
+  api/          HTTP handlers, router, and MCP server
   ai/           AI generator interface (Anthropic + Claude Code providers)
   auth/         JWT, bcrypt, bootstrap
   config/       YAML config and .env loading
   connector/    External source clients (GitHub, Notion, Grafana, PostHog, SigNoz)
-  pipeline/     AI analysis pipelines (concerns, goals, workload, velocity, alignment)
+  pipeline/     AI analysis pipelines (concerns, goals, workload, velocity, alignment, team status)
   store/        SQLite store and migrations
-  sync/         Sync engine and auto-tag logic
+  sync/         Sync engine, discovery, classification, and homepage extraction
   tui/          Bubble Tea app, views, and HTTP client
 ```
 
@@ -163,6 +215,7 @@ internal/
 - JWT access tokens (1-hour expiry) + refresh tokens (30-day expiry)
 - Bcrypt password hashing
 - All API endpoints except `/auth/login` and `/auth/refresh` require a valid JWT
+- `/mcp` uses a separate static API key (see above)
 
 ## Development
 
