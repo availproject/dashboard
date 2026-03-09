@@ -27,11 +27,16 @@ type AIConfig struct {
 	BinaryPath string `yaml:"binary_path"`
 }
 
+type MCPConfig struct {
+	APIKey string `yaml:"api_key"`
+}
+
 type Config struct {
 	Server  ServerConfig  `yaml:"server"`
 	Storage StorageConfig `yaml:"storage"`
 	Auth    AuthConfig    `yaml:"auth"`
 	AI      AIConfig      `yaml:"ai"`
+	MCP     MCPConfig     `yaml:"mcp"`
 }
 
 func Load(path string) (*Config, error) {

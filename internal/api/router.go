@@ -36,6 +36,9 @@ func NewRouter(deps *Deps) http.Handler {
 	r.Use(middleware.Recoverer)
 
 	// Public auth routes
+	// MCP endpoint — authenticated via static API key (see config.yaml mcp.api_key)
+	r.Mount("/mcp", deps.buildMCPHandler())
+
 	r.Post("/auth/login", deps.handleLogin)
 	r.Post("/auth/refresh", deps.handleRefresh)
 

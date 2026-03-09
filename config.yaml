@@ -14,3 +14,6 @@ ai:
   model: claude-opus-4-6
   api_key: ""
   binary_path: claude
+
+mcp:
+  api_key: "92h29c293c7g29wxqwx0inxwuywvc"
