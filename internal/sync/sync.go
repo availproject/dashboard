@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -410,6 +411,10 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 
 	// Marketing campaigns: fetch if team has a marketing_label configured.
 	td.marketingCampaigns = e.fetchMarketingCampaigns(ctx, teamID, errs)
+
+	// Persist activity and marketing snapshots for the API.
+	e.saveActivitySnapshot(ctx, teamID, &td)
+	e.saveMarketingSnapshot(ctx, teamID, td.marketingCampaigns)
 
 	return td
 }
@@ -818,4 +823,167 @@ func firstLine(s string) string {
 		return s[:idx]
 	}
 	return s
+}
+
+// ---- Snapshot persistence ----
+
+// saveActivitySnapshot builds and persists the activity snapshot for a team.
+func (e *Engine) saveActivitySnapshot(ctx context.Context, teamID int64, td *teamSyncData) {
+	type snapshotCommit struct {
+		SHA     string `json:"sha"`
+		Author  string `json:"author"`
+		Message string `json:"message"`
+		Repo    string `json:"repo"`
+		Date    string `json:"date"`
+	}
+	type snapshotIssue struct {
+		Number        int    `json:"number"`
+		Title         string `json:"title"`
+		Assignee      string `json:"assignee,omitempty"`
+		ProjectStatus string `json:"project_status,omitempty"`
+	}
+	type snapshotPR struct {
+		Number   int    `json:"number"`
+		Title    string `json:"title"`
+		Author   string `json:"author"`
+		MergedAt string `json:"merged_at"`
+	}
+	type snapshot struct {
+		RecentCommits []snapshotCommit `json:"recent_commits"`
+		OpenIssues    []snapshotIssue  `json:"open_issues"`
+		MergedPRs     []snapshotPR     `json:"merged_prs"`
+		LastSyncedAt  string           `json:"last_synced_at"`
+	}
+
+	// Sort commits newest-first and cap at 15.
+	commits := make([]*gh.RepositoryCommit, len(td.commits))
+	copy(commits, td.commits)
+	sort.Slice(commits, func(i, j int) bool {
+		di := commits[i].GetCommit().GetAuthor().GetDate()
+		dj := commits[j].GetCommit().GetAuthor().GetDate()
+		return di.After(dj.Time)
+	})
+	if len(commits) > 15 {
+		commits = commits[:15]
+	}
+
+	snap := snapshot{LastSyncedAt: time.Now().UTC().Format(time.RFC3339)}
+
+	for _, c := range commits {
+		author := c.GetAuthor().GetLogin()
+		if author == "" {
+			author = c.GetCommit().GetAuthor().GetName()
+		}
+		repo := repoFromURL(c.GetHTMLURL())
+		snap.RecentCommits = append(snap.RecentCommits, snapshotCommit{
+			SHA:     c.GetSHA(),
+			Author:  author,
+			Message: firstLine(c.GetCommit().GetMessage()),
+			Repo:    repo,
+			Date:    c.GetCommit().GetAuthor().GetDate().Format("2006-01-02"),
+		})
+	}
+
+	for _, iss := range td.issues {
+		si := snapshotIssue{
+			Number: iss.GetNumber(),
+			Title:  iss.GetTitle(),
+		}
+		if iss.Assignee != nil {
+			si.Assignee = iss.Assignee.GetLogin()
+		}
+		if td.projectStatuses != nil {
+			si.ProjectStatus = td.projectStatuses[iss.GetNodeID()]
+		}
+		snap.OpenIssues = append(snap.OpenIssues, si)
+	}
+
+	prs := td.mergedPRs
+	if len(prs) > 15 {
+		prs = prs[:15]
+	}
+	for _, pr := range prs {
+		mergedAt := ""
+		if t := pr.GetMergedAt(); !t.IsZero() {
+			mergedAt = t.Format("2006-01-02")
+		}
+		snap.MergedPRs = append(snap.MergedPRs, snapshotPR{
+			Number:   pr.GetNumber(),
+			Title:    pr.GetTitle(),
+			Author:   pr.GetUser().GetLogin(),
+			MergedAt: mergedAt,
+		})
+	}
+
+	data, err := json.Marshal(snap)
+	if err != nil {
+		log.Printf("WARN  sync [team %d]: marshal activity snapshot: %v", teamID, err)
+		return
+	}
+	if err := e.store.UpsertSnapshot(ctx, teamID, "activity", string(data)); err != nil {
+		log.Printf("WARN  sync [team %d]: save activity snapshot: %v", teamID, err)
+	}
+}
+
+// saveMarketingSnapshot persists the marketing campaigns snapshot for a team.
+func (e *Engine) saveMarketingSnapshot(ctx context.Context, teamID int64, campaigns []notionconn.MarketingCampaign) {
+	type snapshotTask struct {
+		Title    string `json:"title"`
+		Status   string `json:"status"`
+		Assignee string `json:"assignee,omitempty"`
+	}
+	type snapshotCampaign struct {
+		Title     string         `json:"title"`
+		Status    string         `json:"status"`
+		DateStart *string        `json:"date_start,omitempty"`
+		DateEnd   *string        `json:"date_end,omitempty"`
+		Tasks     []snapshotTask `json:"tasks"`
+	}
+	type snapshot struct {
+		Campaigns    []snapshotCampaign `json:"campaigns"`
+		LastSyncedAt string             `json:"last_synced_at"`
+	}
+
+	snap := snapshot{LastSyncedAt: time.Now().UTC().Format(time.RFC3339)}
+	for _, c := range campaigns {
+		sc := snapshotCampaign{
+			Title:  c.Title,
+			Status: c.Status,
+		}
+		if c.DateStart != nil {
+			s := c.DateStart.Format("2006-01-02")
+			sc.DateStart = &s
+		}
+		if c.DateEnd != nil {
+			s := c.DateEnd.Format("2006-01-02")
+			sc.DateEnd = &s
+		}
+		for _, t := range c.Tasks {
+			sc.Tasks = append(sc.Tasks, snapshotTask{
+				Title:    t.Title,
+				Status:   t.Status,
+				Assignee: t.Assignee,
+			})
+		}
+		snap.Campaigns = append(snap.Campaigns, sc)
+	}
+
+	data, err := json.Marshal(snap)
+	if err != nil {
+		log.Printf("WARN  sync [team %d]: marshal marketing snapshot: %v", teamID, err)
+		return
+	}
+	if err := e.store.UpsertSnapshot(ctx, teamID, "marketing", string(data)); err != nil {
+		log.Printf("WARN  sync [team %d]: save marketing snapshot: %v", teamID, err)
+	}
+}
+
+// repoFromURL extracts the repository name from a GitHub HTML URL.
+// e.g. https://github.com/owner/repo/commit/sha → "repo"
+func repoFromURL(htmlURL string) string {
+	parts := strings.Split(htmlURL, "/")
+	if len(parts) >= 5 {
+		return parts[4]
+	}
+	return ""
 }
