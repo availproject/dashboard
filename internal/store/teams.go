@@ -18,8 +18,8 @@ func (s *Store) CreateTeam(ctx context.Context, name string) (*Team, error) {
 		return nil, fmt.Errorf("last insert id: %w", err)
 	}
 	var t Team
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, created_at FROM teams WHERE id = ?`, id)
-	if err := row.Scan(&t.ID, &t.Name, &t.CreatedAt); err != nil {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, marketing_label, created_at FROM teams WHERE id = ?`, id)
+	if err := row.Scan(&t.ID, &t.Name, &t.MarketingLabel, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &t, nil
@@ -52,8 +52,8 @@ func (s *Store) DeleteTeam(ctx context.Context, id int64) error {
 // GetTeam returns the team with the given ID.
 func (s *Store) GetTeam(ctx context.Context, id int64) (*Team, error) {
 	var t Team
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, created_at FROM teams WHERE id = ?`, id)
-	if err := row.Scan(&t.ID, &t.Name, &t.CreatedAt); err != nil {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, marketing_label, created_at FROM teams WHERE id = ?`, id)
+	if err := row.Scan(&t.ID, &t.Name, &t.MarketingLabel, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &t, nil
@@ -61,7 +61,7 @@ func (s *Store) GetTeam(ctx context.Context, id int64) (*Team, error) {
 
 // ListTeams returns all teams ordered by id.
 func (s *Store) ListTeams(ctx context.Context) ([]*Team, error) {
-	const q = `SELECT id, name, created_at FROM teams ORDER BY id`
+	const q = `SELECT id, name, marketing_label, created_at FROM teams ORDER BY id`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -70,12 +70,29 @@ func (s *Store) ListTeams(ctx context.Context) ([]*Team, error) {
 	var teams []*Team
 	for rows.Next() {
 		var t Team
-		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.MarketingLabel, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		teams = append(teams, &t)
 	}
 	return teams, rows.Err()
+}
+
+// UpdateTeamMarketingLabel sets or clears the marketing_label for the given team.
+func (s *Store) UpdateTeamMarketingLabel(ctx context.Context, id int64, label sql.NullString) error {
+	const q = `UPDATE teams SET marketing_label = ? WHERE id = ?`
+	res, err := s.db.ExecContext(ctx, q, label, id)
+	if err != nil {
+		return fmt.Errorf("update marketing label: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // AddMember inserts a new team member and returns the created record.

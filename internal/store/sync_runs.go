@@ -6,6 +6,20 @@ import (
 	"fmt"
 )
 
+// MarkOrphanedRunsFailed marks any sync_runs still in status='running' as
+// 'error'. This is called on startup to clean up runs that were interrupted
+// by a server restart.
+func (s *Store) MarkOrphanedRunsFailed(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE sync_runs SET status = 'error', error = 'interrupted by server restart', finished_at = CURRENT_TIMESTAMP WHERE status = 'running'`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("mark orphaned runs failed: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // CreateSyncRun inserts a new sync run with status 'running' and returns it.
 func (s *Store) CreateSyncRun(ctx context.Context, teamID sql.NullInt64, scope string) (*SyncRun, error) {
 	res, err := s.db.ExecContext(ctx,

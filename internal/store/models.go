@@ -16,9 +16,10 @@ type User struct {
 
 // Team represents a row in the teams table.
 type Team struct {
-	ID        int64
-	Name      string
-	CreatedAt time.Time
+	ID             int64
+	Name           string
+	MarketingLabel sql.NullString
+	CreatedAt      time.Time
 }
 
 // TeamMember represents a row in the team_members table.

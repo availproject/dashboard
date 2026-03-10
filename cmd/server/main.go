@@ -79,6 +79,13 @@ func main() {
 		log.Fatalf("bootstrap failed: %v", err)
 	}
 
+	// Mark any sync runs that were left in 'running' state by a previous crash/restart.
+	if n, err := st.MarkOrphanedRunsFailed(context.Background()); err != nil {
+		log.Printf("warn: mark orphaned runs: %v", err)
+	} else if n > 0 {
+		log.Printf("warn: marked %d orphaned sync run(s) as failed", n)
+	}
+
 	// Prune stale AI cache entries older than 30 days.
 	if err := st.PruneStaleCache(context.Background(), 30*24*time.Hour); err != nil {
 		log.Printf("warn: prune stale cache: %v", err)
@@ -131,7 +138,6 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				log.Println("autotag: running scheduled auto-tag")
 				if err := engine.AutoTag(ctx); err != nil {
 					log.Printf("autotag: %v", err)
 				}
