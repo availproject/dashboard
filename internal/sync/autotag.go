@@ -10,9 +10,6 @@ import (
 // AutoTag iterates all active github_project source configs and calls
 // github.AutoTagIssues for each configured repo+project.
 func (e *Engine) AutoTag(ctx context.Context) error {
-	start := time.Now()
-	log.Printf("autotag: starting")
-
 	// Load all catalogue items.
 	items, err := e.store.ListCatalogue(ctx)
 	if err != nil {
@@ -60,11 +57,8 @@ func (e *Engine) AutoTag(ctx context.Context) error {
 		projectStart := time.Now()
 		if err := e.github.AutoTagIssues(ctx, owner, meta.Repo, meta.ProjectID, teamLabelMap); err != nil {
 			log.Printf("autotag: project %s: %v (%.1fs)", meta.ProjectID, err, time.Since(projectStart).Seconds())
-		} else {
-			log.Printf("autotag: project %s done in %.1fs", meta.ProjectID, time.Since(projectStart).Seconds())
 		}
 	}
 
-	log.Printf("autotag: completed in %.1fs", time.Since(start).Seconds())
 	return nil
 }

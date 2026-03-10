@@ -13,15 +13,19 @@ import (
 	gh "github.com/google/go-github/v60/github"
 	"github.com/your-org/dashboard/internal/pipeline"
 	"github.com/your-org/dashboard/internal/store"
+	githubconn "github.com/your-org/dashboard/internal/connector/github"
+	notionconn "github.com/your-org/dashboard/internal/connector/notion"
 )
 
 // teamSyncData holds source content fetched for a single team's incremental sync.
 type teamSyncData struct {
-	currentPlanText string
-	goalsDocText    string
-	openIssues      []*gh.Issue
-	mergedPRs       []*gh.PullRequest
-	commits         []*gh.RepositoryCommit
+	currentPlanText    string
+	goalsDocText       string
+	issues             []*gh.Issue
+	projectStatuses    map[string]string // issue node ID → project board status
+	mergedPRs          []*gh.PullRequest
+	commits            []*gh.RepositoryCommit
+	marketingCampaigns []notionconn.MarketingCampaign
 }
 
 // Sync runs an incremental sync for the given scope and optional teamID.
@@ -158,6 +162,7 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	var contentWork []notionFetchWork
 	var githubConfigs []*store.SourceConfig
 	githubItems := map[int64]*store.SourceCatalogue{}
+	var projectID string
 
 	// Build set of catalogue IDs that serve as the project homepage — they should
 	// never be fetched as content sources even if they carry an old purpose tag.
@@ -196,6 +201,11 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 		case "github_label", "github_repo":
 			githubConfigs = append(githubConfigs, cfg)
 			githubItems[cfg.ID] = item
+		case "github_project":
+			meta := parseJSONMeta(item.SourceMeta)
+			if pid, _ := meta["project_id"].(string); pid != "" {
+				projectID = pid
+			}
 		}
 	}
 
@@ -287,7 +297,7 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 				log.Printf("WARN  sync [team %d]: %s fetch issues: %v", teamID, key, fetchErr)
 			} else {
 				log.Printf("INFO  sync [team %d]: %s: %d issues", teamID, key, len(issues))
-				td.openIssues = append(td.openIssues, issues...)
+				td.issues = append(td.issues, issues...)
 			}
 			_ = e.store.TouchCatalogueItem(ctx, item.ID)
 
@@ -316,7 +326,7 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 					log.Printf("WARN  sync [team %d]: %s fetch issues: %v", teamID, key, fetchErr)
 				} else {
 					log.Printf("INFO  sync [team %d]: %s: %d issues (label=%s)", teamID, key, len(issues), label)
-					td.openIssues = append(td.openIssues, issues...)
+					td.issues = append(td.issues, issues...)
 				}
 			}
 
@@ -358,7 +368,114 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 			_ = e.store.TouchCatalogueItem(ctx, item.ID)
 		}
 	}
+	// Enrich issues with project board status via targeted node lookup.
+	if projectID == "" {
+		log.Printf("DEBUG sync [team %d]: no github_project source configured; skipping project status enrichment", teamID)
+	} else if len(td.issues) == 0 {
+		log.Printf("DEBUG sync [team %d]: no issues fetched; skipping project status enrichment", teamID)
+	} else {
+		nodeIDs := make([]string, len(td.issues))
+		for i, iss := range td.issues {
+			nodeIDs[i] = iss.GetNodeID()
+		}
+		log.Printf("DEBUG sync [team %d]: enriching %d issues with project status (project %s)", teamID, len(td.issues), projectID)
+		statuses, err := e.github.FetchIssueProjectStatuses(ctx, nodeIDs, projectID)
+		if err != nil {
+			log.Printf("WARN  sync [team %d]: fetch issue project statuses: %v", teamID, err)
+		} else {
+			td.projectStatuses = statuses
+			log.Printf("INFO  sync [team %d]: enriched %d/%d issues with project status", teamID, len(statuses), len(td.issues))
+			// Close any issues that are open on GitHub but terminal on the project board.
+			for _, iss := range td.issues {
+				s, ok := statuses[iss.GetNodeID()]
+				if !ok || iss.GetState() != "open" {
+					continue
+				}
+				switch s {
+				case "Done", "Won't Do", "Not Complete":
+					owner, repo := githubconn.IssueOwnerRepo(iss)
+					if owner == "" || repo == "" {
+						log.Printf("WARN  sync [team %d]: issue #%d '%s' project_status=%q but cannot determine repo; skipping close", teamID, iss.GetNumber(), iss.GetTitle(), s)
+						continue
+					}
+					if err := e.github.CloseIssue(ctx, owner, repo, iss.GetNumber()); err != nil {
+						log.Printf("WARN  sync [team %d]: close issue #%d: %v", teamID, iss.GetNumber(), err)
+					} else {
+						log.Printf("INFO  sync [team %d]: closed issue #%d '%s' (project_status=%q)", teamID, iss.GetNumber(), iss.GetTitle(), s)
+					}
+				}
+			}
+		}
+	}
+
+	// Marketing campaigns: fetch if team has a marketing_label configured.
+	td.marketingCampaigns = e.fetchMarketingCampaigns(ctx, teamID, errs)
+
 	return td
+}
+
+// fetchMarketingCampaigns fetches marketing campaigns for a team if it has a
+// marketing_label and there is an org-level marketing_calendar source configured.
+func (e *Engine) fetchMarketingCampaigns(ctx context.Context, teamID int64, errs map[string]string) []notionconn.MarketingCampaign {
+	team, err := e.store.GetTeam(ctx, teamID)
+	if err != nil || !team.MarketingLabel.Valid || team.MarketingLabel.String == "" {
+		return nil
+	}
+	label := team.MarketingLabel.String
+
+	// Find the team-level marketing_calendar source.
+	teamConfigs, err := e.store.GetSourceConfigsForScope(ctx, sql.NullInt64{Int64: teamID, Valid: true})
+	if err != nil {
+		return nil
+	}
+	var mktDBID string
+	for _, cfg := range teamConfigs {
+		if cfg.Purpose == "marketing_calendar" {
+			item, err := e.store.GetCatalogueItem(ctx, cfg.CatalogueID)
+			if err == nil {
+				mktDBID = item.ExternalID
+				break
+			}
+		}
+	}
+	if mktDBID == "" {
+		log.Printf("INFO  sync [team %d]: marketing_label set to %q but no marketing_calendar source configured for team; skipping", teamID, label)
+		return nil
+	}
+
+	t0 := time.Now()
+	campaigns, err := e.notion.FetchMarketingCampaigns(ctx, mktDBID, label)
+	if err != nil {
+		errs[fmt.Sprintf("team_%d_marketing", teamID)] = err.Error()
+		log.Printf("WARN  sync [team %d]: fetch marketing campaigns: %v", teamID, err)
+		return nil
+	}
+	log.Printf("INFO  sync [team %d]: fetched %d marketing campaign(s) (label=%q) in %s", teamID, len(campaigns), label, time.Since(t0).Round(time.Millisecond))
+	return campaigns
+}
+
+// GetMarketingLabels returns the available project label options from the team's
+// configured marketing calendar Notion database. Returns an error if no
+// marketing_calendar source is configured for the team or the Notion call fails.
+func (e *Engine) GetMarketingLabels(ctx context.Context, teamID int64) ([]string, error) {
+	configs, err := e.store.GetSourceConfigsForScope(ctx, sql.NullInt64{Int64: teamID, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("get source configs: %w", err)
+	}
+	var dbID string
+	for _, cfg := range configs {
+		if cfg.Purpose == "marketing_calendar" {
+			item, err := e.store.GetCatalogueItem(ctx, cfg.CatalogueID)
+			if err == nil {
+				dbID = item.ExternalID
+				break
+			}
+		}
+	}
+	if dbID == "" {
+		return nil, fmt.Errorf("no marketing_calendar source configured for team %d", teamID)
+	}
+	return e.notion.FetchProjectLabels(ctx, dbID)
 }
 
 // fetchGithubFileContent retrieves the raw content of a github_file catalogue item.
@@ -444,7 +561,7 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 	}
 
 	closedCount := 0
-	for _, issue := range td.openIssues {
+	for _, issue := range td.issues {
 		if issue.GetState() == "closed" {
 			closedCount++
 		}
@@ -483,11 +600,12 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 			defer phase2.Done()
 			t0 := time.Now()
 			result, err := e.pipeline.RunTeamStatus(ctx, teamID, pipeline.TeamStatusInput{
-				GoalsDocText:   td.goalsDocText,
-				SprintPlanText: td.currentPlanText,
-				SprintMeta:     sprintMeta,
-				OpenIssues:     issuesToAny(td.openIssues),
-				MergedPRs:      prsToAny(td.mergedPRs),
+				GoalsDocText:       td.goalsDocText,
+				SprintPlanText:     td.currentPlanText,
+				SprintMeta:         sprintMeta,
+				OpenIssues:         issuesToAny(td.issues, td.projectStatuses),
+				MergedPRs:          prsToAny(td.mergedPRs),
+				MarketingCampaigns: marketingCampaignsToAny(td.marketingCampaigns),
 			})
 			if err != nil {
 				log.Printf("ERROR sync [team %d]: team_status: %v", teamID, err)
@@ -511,7 +629,7 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 			defer phase2.Done()
 			t0 := time.Now()
 			_, _ = e.pipeline.RunWorkloadEstimation(ctx, teamID, pipeline.WorkloadInput{
-				Members:            buildWorkloadMembers(members, td.openIssues, td.mergedPRs, td.commits),
+				Members:            buildWorkloadMembers(members, td.issues, td.mergedPRs, td.commits),
 				SprintWindow:       sprintWindow(sprintMeta),
 				StandardSprintDays: 5,
 			})
@@ -554,15 +672,20 @@ func parseJSONMeta(meta sql.NullString) map[string]any {
 }
 
 // issuesToAny converts []*gh.Issue to []any with key fields for pipeline prompts.
-func issuesToAny(issues []*gh.Issue) []any {
+// projectStatuses maps issue node ID → project board status; may be nil.
+func issuesToAny(issues []*gh.Issue, projectStatuses map[string]string) []any {
 	result := make([]any, len(issues))
 	for i, issue := range issues {
-		result[i] = map[string]any{
+		m := map[string]any{
 			"number": issue.GetNumber(),
 			"title":  issue.GetTitle(),
 			"state":  issue.GetState(),
 			"url":    issue.GetHTMLURL(),
 		}
+		if status, ok := projectStatuses[issue.GetNodeID()]; ok {
+			m["project_status"] = status
+		}
+		result[i] = m
 	}
 	return result
 }
@@ -654,6 +777,39 @@ func sprintWindow(sm *store.SprintMeta) pipeline.SprintWindow {
 		Start: sm.StartDate.String,
 		End:   sm.EndDate.String,
 	}
+}
+
+// marketingCampaignsToAny converts []notionconn.MarketingCampaign to []any for pipeline prompts.
+// Returns nil if there are no campaigns, so the AI prompt omits the field entirely.
+func marketingCampaignsToAny(campaigns []notionconn.MarketingCampaign) any {
+	if len(campaigns) == 0 {
+		return nil
+	}
+	result := make([]any, len(campaigns))
+	for i, c := range campaigns {
+		tasks := make([]any, len(c.Tasks))
+		for j, t := range c.Tasks {
+			tasks[j] = map[string]any{
+				"title":    t.Title,
+				"status":   t.Status,
+				"assignee": t.Assignee,
+				"body":     t.Body,
+			}
+		}
+		entry := map[string]any{
+			"title":  c.Title,
+			"status": c.Status,
+			"tasks":  tasks,
+		}
+		if c.DateStart != nil {
+			entry["date_start"] = c.DateStart.Format("2006-01-02")
+		}
+		if c.DateEnd != nil {
+			entry["date_end"] = c.DateEnd.Format("2006-01-02")
+		}
+		result[i] = entry
+	}
+	return result
 }
 
 // firstLine returns the first line of a multiline string.

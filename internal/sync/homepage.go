@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -87,13 +88,16 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 	if result.GoalsDoc != nil {
 		goalsURL = *result.GoalsDoc
 	}
-	log.Printf("INFO  homepage_extract [run %d team %d]: AI result — goals_doc=%q sprint_plans=%d repos=%d metrics=%d",
-		runID, teamID, goalsURL, len(result.SprintPlans), len(result.Repos), len(result.Metrics))
+	log.Printf("INFO  homepage_extract [run %d team %d]: AI result — goals_doc=%q sprint_plans=%d repos=%d project_boards=%d metrics=%d",
+		runID, teamID, goalsURL, len(result.SprintPlans), len(result.Repos), len(result.ProjectBoards), len(result.Metrics))
 	for i, sp := range result.SprintPlans {
 		log.Printf("INFO  homepage_extract [run %d team %d]:   sprint[%d] status=%q title=%q url=%q", runID, teamID, i, sp.SprintStatus, sp.Title, sp.URL)
 	}
 	for i, r := range result.Repos {
 		log.Printf("INFO  homepage_extract [run %d team %d]:   repo[%d] url=%q", runID, teamID, i, r)
+	}
+	for i, b := range result.ProjectBoards {
+		log.Printf("INFO  homepage_extract [run %d team %d]:   project_board[%d] url=%q", runID, teamID, i, b)
 	}
 
 	// 5. Delete existing ai_extracted configs for this team.
@@ -162,7 +166,74 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 		}
 	}
 
-	// 8. Upsert GitHub repos.
+	// 8. Upsert GitHub project boards and their linked repos.
+	for _, boardURL := range result.ProjectBoards {
+		if boardURL == "" {
+			continue
+		}
+		normalizedURL := normalizeGitHubProjectURL(boardURL)
+		_, target, err := detectScope(normalizedURL)
+		if err != nil {
+			log.Printf("WARN  homepage_extract [run %d team %d]: github_project scope detect failed for %q: %v", runID, teamID, normalizedURL, err)
+			continue
+		}
+		log.Printf("INFO  homepage_extract [run %d team %d]: discovering github_project %q", runID, teamID, normalizedURL)
+		discovered, err := e.github.DiscoverProject(ctx, target)
+		if err != nil {
+			log.Printf("WARN  homepage_extract [run %d team %d]: github_project discover failed: %v", runID, teamID, err)
+			continue
+		}
+
+		// Upsert all discovered items into the catalogue.
+		catalogueIDs := map[string]int64{} // "sourceType\x00externalID" → catalogue id
+		for _, di := range discovered {
+			metaStr := sql.NullString{}
+			if di.SourceMeta != nil {
+				if b, merr := json.Marshal(di.SourceMeta); merr == nil {
+					metaStr = sql.NullString{String: string(b), Valid: true}
+				}
+			}
+			cat, uerr := e.store.UpsertCatalogueItem(ctx,
+				di.SourceType, di.ExternalID, di.Title,
+				sql.NullString{String: di.URL, Valid: di.URL != ""},
+				metaStr, sql.NullInt64{},
+			)
+			if uerr != nil {
+				continue
+			}
+			catalogueIDs[di.SourceType+"\x00"+di.ExternalID] = cat.ID
+		}
+
+		// Configure the project board itself.
+		for _, di := range discovered {
+			if di.SourceType != "github_project" {
+				continue
+			}
+			catID := catalogueIDs["github_project\x00"+di.ExternalID]
+			if catID == 0 {
+				continue
+			}
+			log.Printf("INFO  homepage_extract [run %d team %d]: github_project → catalogue id %d", runID, teamID, catID)
+			_, _ = e.store.UpsertSourceConfig(ctx, catID, nullTeamID, "github_project",
+				sql.NullString{}, "ai_extracted")
+		}
+
+		// Configure linked repos so issue fetching works without manual entries.
+		for _, di := range discovered {
+			if di.SourceType != "github_repo" {
+				continue
+			}
+			catID := catalogueIDs["github_repo\x00"+di.ExternalID]
+			if catID == 0 {
+				continue
+			}
+			log.Printf("INFO  homepage_extract [run %d team %d]: github_project linked repo %q → catalogue id %d", runID, teamID, di.ExternalID, catID)
+			_, _ = e.store.UpsertSourceConfig(ctx, catID, nullTeamID, "github_repo",
+				sql.NullString{}, "ai_extracted")
+		}
+	}
+
+	// 9. Upsert GitHub repos.
 	for _, repoURL := range result.Repos {
 		if repoURL == "" {
 			continue
@@ -178,7 +249,7 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 			sql.NullString{}, "ai_extracted")
 	}
 
-	// 9. Upsert metrics panels.
+	// 10. Upsert metrics panels.
 	for _, metricsURL := range result.Metrics {
 		if metricsURL == "" {
 			continue
@@ -193,7 +264,7 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 			sql.NullString{}, "ai_extracted")
 	}
 
-	// 10. Mark done.
+	// 11. Mark done.
 	log.Printf("INFO  homepage_extract [run %d team %d]: done", runID, teamID)
 	_ = e.store.UpdateSyncRun(ctx, runID, "done", sql.NullString{})
 }
@@ -229,6 +300,8 @@ func (e *Engine) discoverSingleURL(ctx context.Context, rawURL string) (int64, e
 		items, err = e.notion.Discover(ctx, target)
 	case "github_repo":
 		items, err = e.github.Discover(ctx, target)
+	case "github_project":
+		items, err = e.github.DiscoverProject(ctx, target)
 	default:
 		return 0, fmt.Errorf("discoverSingleURL: unsupported scope %s", scope)
 	}
@@ -268,5 +341,21 @@ func (e *Engine) discoverSingleURL(ctx context.Context, rawURL string) (int64, e
 		return 0, fmt.Errorf("discoverSingleURL: item with URL %q not found after discovery", rawURL)
 	}
 	return matchedID, nil
+}
+
+// normalizeGitHubProjectURL strips view and query params from a GitHub project
+// board URL, returning the canonical https://github.com/orgs/{org}/projects/{n} form.
+// Returns the input unchanged if it does not match the expected pattern.
+func normalizeGitHubProjectURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host != "github.com" {
+		return rawURL
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	// Expected: orgs/{org}/projects/{n}[/...]
+	if len(parts) >= 4 && parts[0] == "orgs" && parts[2] == "projects" {
+		return fmt.Sprintf("https://github.com/orgs/%s/projects/%s", parts[1], parts[3])
+	}
+	return rawURL
 }
 
