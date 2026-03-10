@@ -15,6 +15,13 @@ var (
 	noteStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
+type teamViewMode int
+
+const (
+	teamViewModeScroll   teamViewMode = iota // default: j/k scroll line by line
+	teamViewModeAnnotate                     // a: j/k jump by section, enter annotate, esc back
+)
+
 // ---- sync / autotag message types ----
 
 type reportSyncStartedMsg struct {
@@ -66,6 +73,7 @@ type TeamReportView struct {
 	activityErr  string
 	marketingErr string
 
+	mode        teamViewMode
 	scrollY     int
 	cursorIdx   int
 	cursorLines []int // line index per annotatable item, populated each render
@@ -321,62 +329,69 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, nil
 
 	case tea.KeyMsg:
-		switch m.String() {
-		case "j", "down":
-			items := v.annotateItems()
-			if v.cursorIdx < len(items)-1 {
-				v.cursorIdx++
-				v.scrollToCursor()
-			} else {
+		switch v.mode {
+		case teamViewModeScroll:
+			switch m.String() {
+			case "j", "down":
 				v.scrollY++
-			}
-			return v, nil
-		case "k", "up":
-			if v.cursorIdx > 0 {
-				v.cursorIdx--
-				v.scrollToCursor()
-			} else if v.scrollY > 0 {
-				v.scrollY--
-			}
-			return v, nil
-		case "d", "ctrl+d":
-			v.scrollY += v.pageSize() / 2
-			v.snapCursorToVisible()
-			return v, nil
-		case "u", "ctrl+u":
-			if v.scrollY -= v.pageSize() / 2; v.scrollY < 0 {
-				v.scrollY = 0
-			}
-			v.snapCursorToVisible()
-			return v, nil
-		case "r":
-			if !v.syncing && !v.autotagging {
-				v.syncing = true
-				v.syncMsg = "Syncing team…"
-				return v, doReportSync(v.c, v.teamID)
-			}
-			return v, nil
-		case "t":
-			if !v.autotagging && !v.syncing {
-				v.autotagging = true
-				v.syncMsg = "Tagging GitHub tasks…"
-				return v, doAutotag(v.c)
-			}
-			return v, nil
-		case "a":
-			items := v.annotateItems()
-			if v.cursorIdx >= 0 && v.cursorIdx < len(items) {
-				it := items[v.cursorIdx]
-				sectionKey := it.itemRef
-				if it.tier == "team" {
-					sectionKey = "team"
+			case "k", "up":
+				if v.scrollY > 0 {
+					v.scrollY--
 				}
-				var existing []client.SectionAnnotation
-				if v.goals != nil {
-					existing = v.goals.SectionAnnotations[sectionKey]
+			case "d", "ctrl+d":
+				v.scrollY += v.pageSize() / 2
+			case "u", "ctrl+u":
+				if v.scrollY -= v.pageSize() / 2; v.scrollY < 0 {
+					v.scrollY = 0
 				}
-				av := NewSectionAnnotateView(v.c, v.teamID, it.tier, it.itemRef, existing)
-				return v, func() tea.Msg { return PushViewMsg{View: av} }
+			case "a":
+				v.mode = teamViewModeAnnotate
+				v.snapCursorToVisible()
+			case "r":
+				if !v.syncing && !v.autotagging {
+					v.syncing = true
+					v.syncMsg = "Syncing team…"
+					return v, doReportSync(v.c, v.teamID)
+				}
+			case "t":
+				if !v.autotagging && !v.syncing {
+					v.autotagging = true
+					v.syncMsg = "Tagging GitHub tasks…"
+					return v, doAutotag(v.c)
+				}
+			}
+			return v, nil
+
+		case teamViewModeAnnotate:
+			switch m.String() {
+			case "j", "down":
+				items := v.annotateItems()
+				if v.cursorIdx < len(items)-1 {
+					v.cursorIdx++
+					v.scrollToCursor()
+				}
+			case "k", "up":
+				if v.cursorIdx > 0 {
+					v.cursorIdx--
+					v.scrollToCursor()
+				}
+			case "enter":
+				items := v.annotateItems()
+				if v.cursorIdx >= 0 && v.cursorIdx < len(items) {
+					it := items[v.cursorIdx]
+					sectionKey := it.itemRef
+					if it.tier == "team" {
+						sectionKey = "team"
+					}
+					var existing []client.SectionAnnotation
+					if v.goals != nil {
+						existing = v.goals.SectionAnnotations[sectionKey]
+					}
+					av := NewSectionAnnotateView(v.c, v.teamID, it.tier, it.itemRef, existing)
+					return v, func() tea.Msg { return PushViewMsg{View: av} }
+				}
+			case "esc":
+				v.mode = teamViewModeScroll
 			}
 			return v, nil
 		}
@@ -546,7 +561,13 @@ func (v *TeamReportView) View() string {
 		scrollIndicator = "  " + dimStyle.Render(fmt.Sprintf("%d%%", pct))
 	}
 
-	footer := "\n" + dimStyle.Render("  j/k cursor  ·  d/u page  ·  a annotate  ·  r sync  ·  t tag tasks  ·  Esc back") + scrollIndicator + "\n"
+	var footer string
+	switch v.mode {
+	case teamViewModeAnnotate:
+		footer = "\n" + warningAmberStyle.Render("  ANNOTATE  ") + "  " + dimStyle.Render("j/k section  ·  Enter open  ·  Esc exit") + "\n"
+	default:
+		footer = "\n" + dimStyle.Render("  j/k scroll  ·  d/u page  ·  a annotate  ·  r sync  ·  t tag  ·  Esc back") + scrollIndicator + "\n"
+	}
 	return visible + footer
 }
 
@@ -586,7 +607,7 @@ func (v *TeamReportView) renderContent() string {
 	cursorMark := func() string {
 		idx := annotateIdx
 		annotateIdx++
-		if idx == v.cursorIdx {
+		if v.mode == teamViewModeAnnotate && idx == v.cursorIdx {
 			return "> "
 		}
 		return "  "
