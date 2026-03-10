@@ -409,11 +409,11 @@ func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connecto
 	return items, nil
 }
 
-// FetchIssues fetches issues matching the given label.
-// It always returns all currently open issues (full sprint board view) plus
-// issues closed within the last 90 days (velocity signal).
-// The since parameter is accepted but not used for open issues, ensuring the
-// AI always sees the complete current sprint state regardless of sync frequency.
+// FetchIssues fetches issues for a repo relevant to the given label.
+// It always returns all currently open issues with the label (full sprint board view)
+// plus all issues closed in the repo within the last 90 days regardless of label,
+// because closed issues often have their team label removed as part of the done workflow,
+// which would otherwise cause them to silently disappear from the AI's view.
 func (c *Client) FetchIssues(ctx context.Context, owner, repo, label string, since time.Time) ([]*gh.Issue, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
@@ -429,13 +429,15 @@ func (c *Client) FetchIssues(ctx context.Context, owner, repo, label string, sin
 		return nil, err
 	}
 
-	// 2. Recently closed issues — 90-day lookback for velocity/progress signal.
+	// 2. All recently closed issues in the repo — no label filter, because teams
+	// commonly remove the team label when closing an issue (e.g. marking Done on
+	// a project board strips the label), making label-filtered closed searches miss them.
 	closedSince := time.Now().AddDate(0, 0, -90)
 	if since.Before(closedSince) {
 		closedSince = since
 	}
 	if err := c.searchIssues(ctx,
-		fmt.Sprintf("repo:%s/%s label:%q is:closed closed:>%s", owner, repo, label, closedSince.UTC().Format("2006-01-02")),
+		fmt.Sprintf("repo:%s/%s is:closed closed:>%s", owner, repo, closedSince.UTC().Format("2006-01-02")),
 		&all,
 	); err != nil {
 		return nil, err
@@ -627,7 +629,27 @@ func (c *Client) FetchCommits(ctx context.Context, owner, repo string, since, un
 
 	var result []*gh.RepositoryCommit
 	for {
-		commits, resp, err := c.client.Repositories.ListCommits(ctx, owner, repo, opts)
+		var commits []*gh.RepositoryCommit
+		var resp *gh.Response
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(time.Duration(attempt*2) * time.Second):
+				}
+			}
+			commits, resp, err = c.client.Repositories.ListCommits(ctx, owner, repo, opts)
+			if err == nil {
+				break
+			}
+			if resp != nil && (resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout) {
+				log.Printf("WARN  github: list commits %s/%s page %d: %d, retrying (attempt %d/3)", owner, repo, opts.Page, resp.StatusCode, attempt+1)
+				continue
+			}
+			break
+		}
 		if err != nil {
 			// 409 means the repository exists but has no commits yet — treat as empty.
 			if resp != nil && resp.StatusCode == http.StatusConflict {
@@ -679,6 +701,144 @@ func (c *Client) FetchMarkdownFile(ctx context.Context, owner, repo, path string
 	}
 	content = decoded
 	return content, sha, nil
+}
+
+// FetchIssueProjectStatuses takes a list of issue node IDs and returns a map of
+// node ID → project Status field value for issues that are members of projectID.
+// If projectID is empty, the first Status field value found is used regardless of project.
+// Issues not in the project or without a Status value are omitted from the map.
+// Node IDs are batched in groups of 100 (GitHub GraphQL nodes() limit).
+func (c *Client) FetchIssueProjectStatuses(ctx context.Context, nodeIDs []string, projectID string) (map[string]string, error) {
+	if err := c.checkToken(); err != nil {
+		return nil, err
+	}
+	if len(nodeIDs) == 0 {
+		return map[string]string{}, nil
+	}
+
+	type projectRef struct {
+		ID string `json:"id"`
+	}
+	type fieldValueNode struct {
+		Name  string `json:"name"`
+		Field struct {
+			Name string `json:"name"`
+		} `json:"field"`
+	}
+	type projectItemNode struct {
+		Project     projectRef `json:"project"`
+		FieldValues struct {
+			Nodes []fieldValueNode `json:"nodes"`
+		} `json:"fieldValues"`
+	}
+	type issueNode struct {
+		ID           string `json:"id"`
+		ProjectItems struct {
+			Nodes []projectItemNode `json:"nodes"`
+		} `json:"projectItems"`
+	}
+	type nodesData struct {
+		Nodes []json.RawMessage `json:"nodes"`
+	}
+
+	const query = `query($ids: [ID!]!) {
+		nodes(ids: $ids) {
+			... on Issue {
+				id
+				projectItems(first: 10) {
+					nodes {
+						project { id }
+						fieldValues(first: 10) {
+							nodes {
+								... on ProjectV2ItemFieldSingleSelectValue {
+									name
+									field { ... on ProjectV2SingleSelectField { name } }
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	result := map[string]string{}
+	for i := 0; i < len(nodeIDs); i += 100 {
+		end := i + 100
+		if end > len(nodeIDs) {
+			end = len(nodeIDs)
+		}
+		batch := nodeIDs[i:end]
+
+		var data nodesData
+		if err := c.graphql(ctx, query, map[string]any{"ids": batch}, &data); err != nil {
+			return nil, err
+		}
+
+		for _, raw := range data.Nodes {
+			if string(raw) == "null" {
+				continue
+			}
+			var issue issueNode
+			if err := json.Unmarshal(raw, &issue); err != nil || issue.ID == "" {
+				continue
+			}
+			for _, item := range issue.ProjectItems.Nodes {
+				if projectID != "" && item.Project.ID != projectID {
+					continue
+				}
+				for _, fv := range item.FieldValues.Nodes {
+					if strings.EqualFold(fv.Field.Name, "status") && fv.Name != "" {
+						result[issue.ID] = fv.Name
+						break
+					}
+				}
+				if result[issue.ID] != "" {
+					break
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
+// CloseIssue closes a GitHub issue by number.
+func (c *Client) CloseIssue(ctx context.Context, owner, repo string, number int) error {
+	if err := c.checkToken(); err != nil {
+		return err
+	}
+	closed := "closed"
+	_, _, err := c.client.Issues.Edit(ctx, owner, repo, number, &gh.IssueRequest{State: &closed})
+	if err != nil {
+		return fmt.Errorf("github: close issue #%d: %w", number, err)
+	}
+	return nil
+}
+
+// IssueOwnerRepo extracts owner and repo from a gh.Issue by parsing its RepositoryURL
+// (e.g. "https://api.github.com/repos/owner/repo") or HTMLURL as a fallback.
+func IssueOwnerRepo(issue *gh.Issue) (string, string) {
+	if u := issue.GetRepositoryURL(); u != "" {
+		// https://api.github.com/repos/{owner}/{repo}
+		const prefix = "https://api.github.com/repos/"
+		if after, ok := strings.CutPrefix(u, prefix); ok {
+			parts := strings.SplitN(after, "/", 2)
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+				return parts[0], parts[1]
+			}
+		}
+	}
+	// Fallback: https://github.com/{owner}/{repo}/issues/{number}
+	if u := issue.GetHTMLURL(); u != "" {
+		const prefix = "https://github.com/"
+		if after, ok := strings.CutPrefix(u, prefix); ok {
+			parts := strings.SplitN(after, "/", 3)
+			if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+				return parts[0], parts[1]
+			}
+		}
+	}
+	return "", ""
 }
 
 // AutoTagIssues pages all items in the project; for each item with Team/Area set
@@ -770,7 +930,6 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 
 	var (
 		cursor         *string
-		page           int
 		totalItems     int
 		skippedClosed  int
 		alreadyLabeled int
@@ -781,8 +940,6 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 		unmappedValues = map[string]int{}
 	)
 	for {
-		page++
-		pageStart := time.Now()
 		vars := map[string]any{"projectID": projectID, "cursor": cursor}
 		var data projectData
 		if err := c.graphql(ctx, query, vars, &data); err != nil {
@@ -790,7 +947,6 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 		}
 		pageItems := len(data.Node.Items.Nodes)
 		totalItems += pageItems
-		log.Printf("autotag: project %s page %d: %d items fetched in %.2fs", projectID, page, pageItems, time.Since(pageStart).Seconds())
 
 		for _, item := range data.Node.Items.Nodes {
 			if item.Type != "ISSUE" {
@@ -873,10 +1029,12 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 		c2 := data.Node.Items.PageInfo.EndCursor
 		cursor = &c2
 	}
-	log.Printf("autotag: project %s summary: %d items across %d pages — %d already labeled, %d newly labeled, %d closed skipped, %d no team/area, %d unmapped team, %d errors",
-		projectID, totalItems, page, alreadyLabeled, labeled, skippedClosed, noTeamArea, noLabel, labelErrors)
 	if len(unmappedValues) > 0 {
-		log.Printf("autotag: project %s unmapped team/area values: %v", projectID, unmappedValues)
+		log.Printf("autotag: %d items — %d labeled, %d already had label, %d closed skipped, %d no team/area, %d unmapped %v, %d errors",
+			totalItems, labeled, alreadyLabeled, skippedClosed, noTeamArea, noLabel, unmappedValues, labelErrors)
+	} else {
+		log.Printf("autotag: %d items — %d labeled, %d already had label, %d closed skipped, %d no team/area, %d errors",
+			totalItems, labeled, alreadyLabeled, skippedClosed, noTeamArea, labelErrors)
 	}
 	return nil
 }
