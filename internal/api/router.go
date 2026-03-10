@@ -17,6 +17,7 @@ type SyncEngine interface {
 	Classify(ctx context.Context, itemIDs []int64) (int64, error)
 	AutoTag(ctx context.Context) error
 	HomepageExtract(ctx context.Context, teamID int64) (int64, error)
+	GetMarketingLabels(ctx context.Context, teamID int64) ([]string, error)
 }
 
 // PipelineRunner is the interface the API layer uses to invoke pipelines.
@@ -55,6 +56,7 @@ func NewRouter(deps *Deps) http.Handler {
 		r.Get("/teams/{id}/velocity", deps.handleTeamVelocity)
 		r.Get("/teams/{id}/metrics", deps.handleTeamMetrics)
 		r.Get("/teams/{id}/config", deps.handleGetTeamConfig)
+		r.Get("/teams/{id}/marketing-labels", deps.handleGetMarketingLabels)
 		r.Get("/sync/{run_id}", deps.handleGetSyncRun)
 		r.Get("/config/sources", deps.handleListSources)
 		r.Get("/config/annotations", deps.handleListConfigAnnotations)
@@ -83,6 +85,7 @@ func NewRouter(deps *Deps) http.Handler {
 
 			r.Post("/config/teams", deps.handleCreateTeam)
 			r.Put("/config/teams/{id}", deps.handleUpdateTeam)
+			r.Put("/config/teams/{id}/marketing-label", deps.handleSetTeamMarketingLabel)
 			r.Delete("/config/teams/{id}", deps.handleDeleteTeam)
 			r.Post("/config/teams/{id}/members", deps.handleAddMember)
 			r.Put("/config/members/{id}", deps.handleUpdateMember)

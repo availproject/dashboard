@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/your-org/dashboard/internal/pipeline"
@@ -66,21 +67,19 @@ func (d *Deps) handleOrgOverview(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// concerns cache: risk_level
-		concernsCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.ConcernsPipeline, teamID)
-		if err == nil {
-			var cr pipeline.ConcernsResult
-			if json.Unmarshal([]byte(concernsCache.Output), &cr) == nil {
-				item.RiskLevel = highestSeverity(cr.Concerns)
+		// team_status cache: risk_level derived from concerns
+		if tsCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.TeamStatusPipeline, teamID); err == nil {
+			var tsr pipeline.TeamStatusResult
+			if json.Unmarshal([]byte(tsCache.Output), &tsr) == nil {
+				item.RiskLevel = highestSeverity(tsr.Concerns)
 			}
 		}
 
-		// goal_extraction cache: focus (first goal text)
-		goalsCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.GoalExtractionPipeline, teamID)
-		if err == nil {
-			var gr pipeline.GoalExtractionResult
-			if json.Unmarshal([]byte(goalsCache.Output), &gr) == nil && len(gr.Goals) > 0 {
-				item.Focus = gr.Goals[0].Text
+		// team_status cache: focus (first business goal text)
+		if tsCache, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.TeamStatusPipeline, teamID); err == nil {
+			var tsr pipeline.TeamStatusResult
+			if json.Unmarshal([]byte(tsCache.Output), &tsr) == nil && len(tsr.BusinessGoals) > 0 {
+				item.Focus = tsr.BusinessGoals[0].Text
 			}
 		}
 
@@ -149,14 +148,14 @@ func (d *Deps) handleOrgOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func highestSeverity(concerns []pipeline.Concern) string {
+func highestSeverity(concerns []pipeline.TeamStatusConcern) string {
 	for _, c := range concerns {
-		if c.Severity == "high" {
+		if strings.EqualFold(c.Severity, "high") {
 			return "high"
 		}
 	}
 	for _, c := range concerns {
-		if c.Severity == "medium" {
+		if strings.EqualFold(c.Severity, "medium") {
 			return "medium"
 		}
 	}

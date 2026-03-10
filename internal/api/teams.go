@@ -20,9 +20,10 @@ type listTeamsMemberItem struct {
 }
 
 type listTeamsItem struct {
-	ID      int64                 `json:"id"`
-	Name    string                `json:"name"`
-	Members []listTeamsMemberItem `json:"members"`
+	ID             int64                 `json:"id"`
+	Name           string                `json:"name"`
+	MarketingLabel *string               `json:"marketing_label,omitempty"`
+	Members        []listTeamsMemberItem `json:"members"`
 }
 
 func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +58,15 @@ func (d *Deps) handleListTeams(w http.ResponseWriter, r *http.Request) {
 			memberItems = append(memberItems, item)
 		}
 
-		result = append(result, listTeamsItem{
+		item := listTeamsItem{
 			ID:      t.ID,
 			Name:    t.Name,
 			Members: memberItems,
-		})
+		}
+		if t.MarketingLabel.Valid && t.MarketingLabel.String != "" {
+			item.MarketingLabel = &t.MarketingLabel.String
+		}
+		result = append(result, item)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -238,20 +243,26 @@ type teamSprintGoalItem struct {
 }
 
 type teamConcernItem struct {
-	Key          string  `json:"key"`
-	Summary      string  `json:"summary"`
-	Explanation  string  `json:"explanation"`
-	Severity     string  `json:"severity"`
-	Scope        string  `json:"scope"`
-	AnnotationID *int64  `json:"annotation_id"`
+	Key         string `json:"key"`
+	Summary     string `json:"summary"`
+	Explanation string `json:"explanation"`
+	Severity    string `json:"severity"`
+	Scope       string `json:"scope"`
+}
+
+// teamSectionAnnotation is a single annotation belonging to a named section.
+type teamSectionAnnotation struct {
+	ID      int64  `json:"id"`
+	Content string `json:"content"`
 }
 
 type teamGoalsResponse struct {
-	BusinessGoals  []teamBusinessGoalItem `json:"business_goals"`
-	SprintGoals    []teamSprintGoalItem   `json:"sprint_goals"`
-	SprintForecast string                 `json:"sprint_forecast"`
-	Concerns       []teamConcernItem      `json:"concerns"`
-	LastSyncedAt   *string                `json:"last_synced_at"`
+	BusinessGoals      []teamBusinessGoalItem            `json:"business_goals"`
+	SprintGoals        []teamSprintGoalItem              `json:"sprint_goals"`
+	SprintForecast     string                            `json:"sprint_forecast"`
+	Concerns           []teamConcernItem                 `json:"concerns"`
+	SectionAnnotations map[string][]teamSectionAnnotation `json:"section_annotations"`
+	LastSyncedAt       *string                           `json:"last_synced_at"`
 }
 
 func (d *Deps) handleTeamGoals(w http.ResponseWriter, r *http.Request) {
@@ -292,28 +303,36 @@ func (d *Deps) handleTeamGoals(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.SprintForecast = ts.SprintForecast
 
-			// Build item_ref → annotation_id map for concern linking
-			annotations, _ := d.Store.ListAnnotations(ctx, teamNullID)
-			annotationByRef := map[string]int64{}
-			for _, a := range annotations {
-				if a.ItemRef.Valid && a.Archived == 0 {
-					annotationByRef[a.ItemRef.String] = a.ID
-				}
-			}
 			for _, c := range ts.Concerns {
-				item := teamConcernItem{
+				resp.Concerns = append(resp.Concerns, teamConcernItem{
 					Key:         c.Key,
 					Summary:     c.Summary,
 					Explanation: c.Explanation,
 					Severity:    c.Severity,
 					Scope:       c.Scope,
-				}
-				if id, ok := annotationByRef[c.Key]; ok {
-					item.AnnotationID = &id
-				}
-				resp.Concerns = append(resp.Concerns, item)
+				})
 			}
 		}
+	}
+
+	// Load section annotations (independent of AI cache).
+	annotations, _ := d.Store.ListAnnotations(ctx, teamNullID)
+	sectionAnnotations := map[string][]teamSectionAnnotation{}
+	for _, a := range annotations {
+		if a.Archived != 0 {
+			continue
+		}
+		key := "team"
+		if a.ItemRef.Valid {
+			key = a.ItemRef.String
+		}
+		sectionAnnotations[key] = append(sectionAnnotations[key], teamSectionAnnotation{
+			ID:      a.ID,
+			Content: a.Content,
+		})
+	}
+	if len(sectionAnnotations) > 0 {
+		resp.SectionAnnotations = sectionAnnotations
 	}
 
 	resp.LastSyncedAt = d.teamLastSyncedAt(r, teamID)

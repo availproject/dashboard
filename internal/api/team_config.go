@@ -24,6 +24,7 @@ type teamConfigSlotItem struct {
 type teamConfigSlots struct {
 	TeamID           int64                          `json:"team_id"`
 	TeamName         string                         `json:"team_name"`
+	MarketingLabel   *string                        `json:"marketing_label,omitempty"`
 	ExtractionStatus string                         `json:"extraction_status"` // "none","running","done"
 	Slots            map[string][]teamConfigSlotItem `json:"slots"`
 }
@@ -33,8 +34,10 @@ var teamSlotKeys = []string{
 	"goals_doc",
 	"sprint_doc",
 	"github_repo",
+	"github_project",
 	"metrics_panel",
 	"task_label",
+	"marketing_calendar",
 }
 
 // handleGetTeamConfig returns slot config grouped by slot for a team.
@@ -129,7 +132,26 @@ func (d *Deps) handleGetTeamConfig(w http.ResponseWriter, r *http.Request) {
 		ExtractionStatus: extractionStatus,
 		Slots:            slots,
 	}
+	if team.MarketingLabel.Valid && team.MarketingLabel.String != "" {
+		resp.MarketingLabel = &team.MarketingLabel.String
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleGetMarketingLabels returns available project label options from the
+// team's configured marketing calendar Notion database.
+func (d *Deps) handleGetMarketingLabels(w http.ResponseWriter, r *http.Request) {
+	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid team id")
+		return
+	}
+	labels, err := d.Engine.GetMarketingLabels(r.Context(), teamID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"labels": labels})
 }
 
 // handleSetTeamHomepage sets the homepage for a team and triggers extraction.

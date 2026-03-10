@@ -233,16 +233,13 @@ func (d *Deps) mcpGetOrgSnapshot(ctx context.Context, req mcp.CallToolRequest) (
 				snap.TotalSprints = sp.TotalSprints
 			}
 		}
-		if c, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.ConcernsPipeline, tid); err == nil {
-			var cr pipeline.ConcernsResult
-			if json.Unmarshal([]byte(c.Output), &cr) == nil {
-				snap.RiskLevel = highestSeverity(cr.Concerns)
-			}
-		}
-		if c, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.GoalExtractionPipeline, tid); err == nil {
-			var gr pipeline.GoalExtractionResult
-			if json.Unmarshal([]byte(c.Output), &gr) == nil && len(gr.Goals) > 0 {
-				snap.Focus = gr.Goals[0].Text
+		if c, err := d.Store.GetLatestCacheByPipeline(ctx, pipeline.TeamStatusPipeline, tid); err == nil {
+			var tsr pipeline.TeamStatusResult
+			if json.Unmarshal([]byte(c.Output), &tsr) == nil {
+				snap.RiskLevel = highestSeverity(tsr.Concerns)
+				if len(tsr.BusinessGoals) > 0 {
+					snap.Focus = tsr.BusinessGoals[0].Text
+				}
 			}
 		}
 		if run, err := d.Store.GetLastCompletedSyncRun(ctx, "team", tid); err == nil && run.FinishedAt.Valid {
@@ -392,28 +389,21 @@ func (d *Deps) mcpGetTeamStatus(ctx context.Context, req mcp.CallToolRequest) (*
 		var ts pipeline.TeamStatusResult
 		if json.Unmarshal([]byte(c.Output), &ts) == nil {
 			for _, g := range ts.BusinessGoals {
-				status.Goals.BusinessGoals = append(status.Goals.BusinessGoals, teamBusinessGoalItem(g))
+				status.Goals.BusinessGoals = append(status.Goals.BusinessGoals, teamBusinessGoalItem{
+					Text: g.Text, Status: g.Status, Note: g.Note,
+				})
 			}
 			for _, g := range ts.SprintGoals {
-				status.Goals.SprintGoals = append(status.Goals.SprintGoals, teamSprintGoalItem(g))
+				status.Goals.SprintGoals = append(status.Goals.SprintGoals, teamSprintGoalItem{
+					Text: g.Text, Status: g.Status, Note: g.Note,
+				})
 			}
 			status.Goals.SprintForecast = ts.SprintForecast
-			annotations, _ := d.Store.ListAnnotations(ctx, tid)
-			annotationByRef := map[string]int64{}
-			for _, a := range annotations {
-				if a.ItemRef.Valid && a.Archived == 0 {
-					annotationByRef[a.ItemRef.String] = a.ID
-				}
-			}
 			for _, c := range ts.Concerns {
-				item := teamConcernItem{
+				status.Goals.Concerns = append(status.Goals.Concerns, teamConcernItem{
 					Key: c.Key, Summary: c.Summary,
 					Explanation: c.Explanation, Severity: c.Severity, Scope: c.Scope,
-				}
-				if id, ok := annotationByRef[c.Key]; ok {
-					item.AnnotationID = &id
-				}
-				status.Goals.Concerns = append(status.Goals.Concerns, item)
+				})
 			}
 		}
 	}

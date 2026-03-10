@@ -16,8 +16,9 @@ type createTeamRequest struct {
 }
 
 type teamResponse struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	MarketingLabel *string `json:"marketing_label,omitempty"`
 }
 
 func (d *Deps) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,7 @@ func (d *Deps) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, teamResponse{ID: team.ID, Name: team.Name})
+	writeJSON(w, http.StatusCreated, teamToResponse(team))
 }
 
 // --- PUT /config/teams/{id} ---
@@ -67,7 +68,7 @@ func (d *Deps) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, teamResponse{ID: team.ID, Name: team.Name})
+	writeJSON(w, http.StatusOK, teamToResponse(team))
 }
 
 // --- DELETE /config/teams/{id} ---
@@ -200,4 +201,54 @@ func (d *Deps) handleDeleteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// teamToResponse converts a store.Team to the JSON response shape.
+func teamToResponse(t *store.Team) teamResponse {
+	resp := teamResponse{ID: t.ID, Name: t.Name}
+	if t.MarketingLabel.Valid && t.MarketingLabel.String != "" {
+		resp.MarketingLabel = &t.MarketingLabel.String
+	}
+	return resp
+}
+
+// --- PUT /config/teams/{id}/marketing-label ---
+
+func (d *Deps) handleSetTeamMarketingLabel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid team id")
+		return
+	}
+
+	var req struct {
+		Label *string `json:"label"` // null or "" to clear
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	ctx := r.Context()
+	var label sql.NullString
+	if req.Label != nil && *req.Label != "" {
+		label = sql.NullString{String: *req.Label, Valid: true}
+	}
+
+	if err := d.Store.UpdateTeamMarketingLabel(ctx, id, label); err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, "team not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "update marketing label: "+err.Error())
+		}
+		return
+	}
+
+	team, err := d.Store.GetTeam(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get team: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, teamToResponse(team))
 }
