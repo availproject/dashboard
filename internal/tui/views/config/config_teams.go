@@ -32,6 +32,7 @@ const (
 	cfgTeamsModeInputEditMember
 	cfgTeamsModeConfirmDeleteTeam
 	cfgTeamsModeConfirmDeleteMember
+	cfgTeamsModeInputMarketingLabel
 )
 
 // ConfigTeamsView manages teams and members.
@@ -117,7 +118,8 @@ func (v *ConfigTeamsView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (v *ConfigTeamsView) handleKey(key string) (tea.Model, tea.Cmd) {
 	switch v.mode {
 	case cfgTeamsModeInputNewTeam, cfgTeamsModeInputEditTeam,
-		cfgTeamsModeInputNewMember, cfgTeamsModeInputEditMember:
+		cfgTeamsModeInputNewMember, cfgTeamsModeInputEditMember,
+		cfgTeamsModeInputMarketingLabel:
 		return v.handleInputKey(key)
 	case cfgTeamsModeConfirmDeleteTeam, cfgTeamsModeConfirmDeleteMember:
 		return v.handleConfirmKey(key)
@@ -229,6 +231,16 @@ func (v *ConfigTeamsView) handleExpandedKey(key string) (tea.Model, tea.Cmd) {
 			v.confirmMsg = fmt.Sprintf("Delete member %q? [y/N]", m.DisplayName)
 			v.mode = cfgTeamsModeConfirmDeleteMember
 		}
+	case "m":
+		if t := v.currentTeam(); t != nil {
+			current := ""
+			if t.MarketingLabel != nil {
+				current = *t.MarketingLabel
+			}
+			v.input.SetValue(current)
+			v.input.Focus()
+			v.mode = cfgTeamsModeInputMarketingLabel
+		}
 	}
 	return v, nil
 }
@@ -269,6 +281,16 @@ func (v *ConfigTeamsView) submitInput(mode configTeamsMode, name string) tea.Cmd
 		memberID := m.ID
 		return func() tea.Msg {
 			err := c.PutConfigMember(memberID, name, nil, nil)
+			return teamsMutatedMsg{err: err}
+		}
+	case cfgTeamsModeInputMarketingLabel:
+		t := v.currentTeam()
+		if t == nil {
+			return nil
+		}
+		teamID := t.ID
+		return func() tea.Msg {
+			err := c.PutTeamMarketingLabel(teamID, name)
 			return teamsMutatedMsg{err: err}
 		}
 	}
@@ -326,6 +348,9 @@ func (v *ConfigTeamsView) View() string {
 	case cfgTeamsModeInputEditMember:
 		sb.WriteString("  Rename member: " + v.input.View() + "\n")
 		sb.WriteString(cfgDimStyle.Render("  Enter to confirm  ·  Esc to cancel") + "\n\n")
+	case cfgTeamsModeInputMarketingLabel:
+		sb.WriteString("  Marketing label: " + v.input.View() + "\n")
+		sb.WriteString(cfgDimStyle.Render("  Enter to confirm  ·  Esc to cancel  ·  Leave empty to clear") + "\n\n")
 	case cfgTeamsModeConfirmDeleteTeam, cfgTeamsModeConfirmDeleteMember:
 		sb.WriteString("  " + v.confirmMsg + "\n\n")
 	}
@@ -356,7 +381,11 @@ func (v *ConfigTeamsView) View() string {
 		} else if i == v.teamCursor {
 			arrow = "▶"
 		}
-		sb.WriteString(fmt.Sprintf("%s%s %s  %s\n", teamPrefix, arrow, teamLabel, cfgDimStyle.Render(fmt.Sprintf("(%d members)", len(t.Members)))))
+		mktSuffix := ""
+		if t.MarketingLabel != nil && *t.MarketingLabel != "" {
+			mktSuffix = "  mkt:" + *t.MarketingLabel
+		}
+		sb.WriteString(fmt.Sprintf("%s%s %s  %s\n", teamPrefix, arrow, teamLabel, cfgDimStyle.Render(fmt.Sprintf("(%d members)%s", len(t.Members), mktSuffix))))
 
 		if i == v.teamCursor && v.expanded {
 			if len(t.Members) == 0 {
@@ -384,7 +413,7 @@ func (v *ConfigTeamsView) View() string {
 
 func (v *ConfigTeamsView) footer() string {
 	if v.expanded {
-		return "\n" + cfgDimStyle.Render("  j/k navigate members  ·  n add member  ·  e edit  ·  d delete  ·  Esc collapse") + "\n"
+		return "\n" + cfgDimStyle.Render("  j/k navigate members  ·  n add member  ·  e edit  ·  d delete  ·  m marketing label  ·  Esc collapse") + "\n"
 	}
 	return "\n" + cfgDimStyle.Render("  j/k navigate  ·  Enter expand  ·  n new team  ·  e rename  ·  d delete  ·  Esc back") + "\n"
 }

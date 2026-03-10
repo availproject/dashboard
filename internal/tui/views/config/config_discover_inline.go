@@ -32,28 +32,34 @@ type inlineDiscoverItemsLoadedMsg struct {
 // ConfigDiscoverInlineView allows the user to enter a URL, discover it,
 // and then select items to add to a slot.
 type ConfigDiscoverInlineView struct {
-	c            *client.Client
-	target       textinput.Model
-	running      bool
-	polling      bool
-	runID        int64
-	errMsg       string
+	c               *client.Client
+	compatibleTypes []string
+	target          textinput.Model
+	running         bool
+	polling         bool
+	runID           int64
+	errMsg          string
 	// after discovery
 	discoveredItems []client.SourceItemResponse
 	selected        map[int]bool
 	cursor          int
+	scrollOffset    int
+	height          int
 }
 
 // NewConfigDiscoverInlineView creates a ConfigDiscoverInlineView.
-func NewConfigDiscoverInlineView(c *client.Client) *ConfigDiscoverInlineView {
+// compatibleTypes filters which source types are shown after discovery;
+// pass nil to show all.
+func NewConfigDiscoverInlineView(c *client.Client, compatibleTypes []string) *ConfigDiscoverInlineView {
 	ti := textinput.New()
 	ti.Placeholder = "paste a URL or owner/repo"
 	ti.Width = 60
 	ti.Focus()
 	return &ConfigDiscoverInlineView{
-		c:        c,
-		target:   ti,
-		selected: make(map[int]bool),
+		c:               c,
+		compatibleTypes: compatibleTypes,
+		target:          ti,
+		selected:        make(map[int]bool),
 	}
 }
 
@@ -97,6 +103,10 @@ func (v *ConfigDiscoverInlineView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		v.cursor = 0
 		return v, nil
 
+	case tea.WindowSizeMsg:
+		v.height = m.Height
+		return v, nil
+
 	case tea.KeyMsg:
 		// If items are loaded, handle selection.
 		if len(v.discoveredItems) > 0 {
@@ -104,11 +114,13 @@ func (v *ConfigDiscoverInlineView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "j", "down":
 				if v.cursor < len(v.discoveredItems)-1 {
 					v.cursor++
+					v.clampScroll()
 				}
 				return v, nil
 			case "k", "up":
 				if v.cursor > 0 {
 					v.cursor--
+					v.clampScroll()
 				}
 				return v, nil
 			case " ":
@@ -177,9 +189,27 @@ func (v *ConfigDiscoverInlineView) poll(runID int64) tea.Cmd {
 
 func (v *ConfigDiscoverInlineView) loadItems() tea.Cmd {
 	c := v.c
+	types := v.compatibleTypes
 	return func() tea.Msg {
-		items, err := c.GetConfigSources()
+		items, err := c.GetConfigSources(types...)
 		return inlineDiscoverItemsLoadedMsg{items: items, err: err}
+	}
+}
+
+func (v *ConfigDiscoverInlineView) availableLines() int {
+	if v.height <= 0 {
+		return 15
+	}
+	return max(5, v.height-10)
+}
+
+func (v *ConfigDiscoverInlineView) clampScroll() {
+	avail := v.availableLines()
+	if v.cursor < v.scrollOffset {
+		v.scrollOffset = v.cursor
+	}
+	if v.cursor >= v.scrollOffset+avail {
+		v.scrollOffset = v.cursor - avail + 1
 	}
 }
 
@@ -217,8 +247,19 @@ func (v *ConfigDiscoverInlineView) View() string {
 
 	// Show discovered items for selection.
 	if len(v.discoveredItems) > 0 {
-		sb.WriteString("  Select items to add:\n\n")
-		for i, item := range v.discoveredItems {
+		total := len(v.discoveredItems)
+		avail := v.availableLines()
+		start := v.scrollOffset
+		end := min(start+avail, total)
+
+		scrollHint := ""
+		if total > avail {
+			scrollHint = fmt.Sprintf(" (%d/%d)", v.cursor+1, total)
+		}
+		sb.WriteString(fmt.Sprintf("  Select items to add:%s\n\n", scrollHint))
+
+		for i := start; i < end; i++ {
+			item := v.discoveredItems[i]
 			prefix := "    "
 			check := "[ ]"
 			if v.selected[i] {

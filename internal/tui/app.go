@@ -70,6 +70,8 @@ type App struct {
 	client     *client.Client
 	syncPoller *SyncPoller
 	banner     components.Banner
+	termWidth  int
+	termHeight int
 }
 
 // NewApp creates an App with the given client. The views stack starts empty;
@@ -120,15 +122,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, tea.Quit
 			}
 		case "esc", "backspace":
+			// Let views that own a text input (e.g. AnnotateView) handle backspace themselves.
+			if m.String() == "backspace" {
+				if top, ok := a.views[len(a.views)-1].(interface{ InterceptsBackspace() bool }); ok && top.InterceptsBackspace() {
+					break
+				}
+			}
 			if len(a.views) > 1 {
 				a.views = a.views[:len(a.views)-1]
 				return a, nil
 			}
 		}
 
+	case tea.WindowSizeMsg:
+		a.termWidth = m.Width
+		a.termHeight = m.Height
+		// fall through to delegate to the top view
+
 	case msgs.PushViewMsg:
 		a.views = append(a.views, m.View)
-		return a, m.View.Init()
+		cmds := []tea.Cmd{m.View.Init()}
+		if a.termWidth > 0 || a.termHeight > 0 {
+			size := tea.WindowSizeMsg{Width: a.termWidth, Height: a.termHeight}
+			updated, cmd := m.View.Update(size)
+			a.views[len(a.views)-1] = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return a, tea.Batch(cmds...)
 
 	case msgs.PopViewMsg:
 		if len(a.views) > 1 {

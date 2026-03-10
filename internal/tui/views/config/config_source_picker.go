@@ -142,7 +142,7 @@ func (v *ConfigSourcePickerView) selectItem() tea.Cmd {
 	filtered := v.filtered()
 	if v.cursor == len(filtered) {
 		// "Discover a new source" option.
-		dv := NewConfigDiscoverInlineView(v.c)
+		dv := NewConfigDiscoverInlineView(v.c, v.compatibleTypes)
 		return func() tea.Msg { return msgs.PushViewMsg{View: dv} }
 	}
 	if v.cursor >= len(filtered) {

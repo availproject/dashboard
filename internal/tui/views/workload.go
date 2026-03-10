@@ -75,7 +75,7 @@ func (v *WorkloadView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (v *WorkloadView) pushAnnotate() tea.Cmd {
 	// Workload annotations are team-level (no specific item ref).
-	av := NewAnnotateView(v.c, v.teamID, "team", "", v.teamName+" workload")
+	av := NewSectionAnnotateView(v.c, v.teamID, "team", "", nil)
 	return func() tea.Msg { return PushViewMsg{View: av} }
 }
 

@@ -10,7 +10,10 @@ import (
 	"github.com/your-org/dashboard/internal/tui/client"
 )
 
-var sectionHeadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Underline(true)
+var (
+	sectionHeadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Underline(true)
+	noteStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+)
 
 // ---- sync / autotag message types ----
 
@@ -57,9 +60,12 @@ type TeamReportView struct {
 	velocityErr string
 	metricsErr  string
 
-	scrollY int
-	height  int
-	width   int
+	scrollY     int
+	cursorIdx   int
+	cursorLines []int // line index per annotatable item, populated each render
+
+	height int
+	width  int
 
 	syncing    bool
 	autotagging bool
@@ -269,20 +275,31 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch m.String() {
 		case "j", "down":
-			v.scrollY++
+			items := v.annotateItems()
+			if v.cursorIdx < len(items)-1 {
+				v.cursorIdx++
+				v.scrollToCursor()
+			} else {
+				v.scrollY++
+			}
 			return v, nil
 		case "k", "up":
-			if v.scrollY > 0 {
+			if v.cursorIdx > 0 {
+				v.cursorIdx--
+				v.scrollToCursor()
+			} else if v.scrollY > 0 {
 				v.scrollY--
 			}
 			return v, nil
 		case "d", "ctrl+d":
 			v.scrollY += v.pageSize() / 2
+			v.snapCursorToVisible()
 			return v, nil
 		case "u", "ctrl+u":
 			if v.scrollY -= v.pageSize() / 2; v.scrollY < 0 {
 				v.scrollY = 0
 			}
+			v.snapCursorToVisible()
 			return v, nil
 		case "r":
 			if !v.syncing && !v.autotagging {
@@ -299,8 +316,21 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return v, nil
 		case "a":
-			av := NewAnnotateView(v.c, v.teamID, "team", "", v.teamName)
-			return v, func() tea.Msg { return PushViewMsg{View: av} }
+			items := v.annotateItems()
+			if v.cursorIdx >= 0 && v.cursorIdx < len(items) {
+				it := items[v.cursorIdx]
+				sectionKey := it.itemRef
+				if it.tier == "team" {
+					sectionKey = "team"
+				}
+				var existing []client.SectionAnnotation
+				if v.goals != nil {
+					existing = v.goals.SectionAnnotations[sectionKey]
+				}
+				av := NewSectionAnnotateView(v.c, v.teamID, it.tier, it.itemRef, existing)
+				return v, func() tea.Msg { return PushViewMsg{View: av} }
+			}
+			return v, nil
 		}
 	}
 
@@ -316,6 +346,8 @@ func goalStatusBadge(status string) string {
 		return warningAmberStyle.Render("[AT RISK] ")
 	case "behind":
 		return riskHighStyle.Render("[BEHIND]  ")
+	case "unclear":
+		return dimStyle.Render("[UNCLEAR] ")
 	default:
 		return dimStyle.Render("[" + status + "]")
 	}
@@ -324,12 +356,12 @@ func goalStatusBadge(status string) string {
 // sprintGoalStatusBadge returns a styled badge for a sprint goal status.
 func sprintGoalStatusBadge(status string) string {
 	switch strings.ToLower(status) {
-	case "likely_done":
-		return riskLowStyle.Render("[LIKELY DONE]")
+	case "on_track":
+		return riskLowStyle.Render("[ON TRACK]")
 	case "at_risk":
-		return warningAmberStyle.Render("[AT RISK]    ")
+		return warningAmberStyle.Render("[AT RISK] ")
 	case "unclear":
-		return dimStyle.Render("[UNCLEAR]    ")
+		return dimStyle.Render("[UNCLEAR] ")
 	default:
 		return dimStyle.Render("[" + status + "]")
 	}
@@ -364,8 +396,76 @@ func (v *TeamReportView) pageSize() int {
 	return ps
 }
 
+// annotateItems returns the ordered list of annotatable items matching
+// the render order: team annotation, business goals section, sprint goals section, concerns section.
+// Each item uses the section key as itemRef so all items in a section share the same annotations.
+func (v *TeamReportView) annotateItems() []annotatePickItem {
+	items := []annotatePickItem{
+		{tier: "team", itemRef: "", label: v.teamName},
+	}
+	if v.goals != nil {
+		if len(v.goals.BusinessGoals) > 0 {
+			items = append(items, annotatePickItem{tier: "item", itemRef: "section:business_goals", label: "Business Goals"})
+		}
+		if len(v.goals.SprintGoals) > 0 {
+			items = append(items, annotatePickItem{tier: "item", itemRef: "section:sprint_goals", label: "Sprint Goals"})
+		}
+		if len(v.goals.Concerns) > 0 {
+			items = append(items, annotatePickItem{tier: "item", itemRef: "section:concerns", label: "Concerns"})
+		}
+	}
+	return items
+}
+
+// sectionBadge returns a count badge string for a section, e.g. " [2]".
+func (v *TeamReportView) sectionBadge(key string) string {
+	if v.goals == nil {
+		return ""
+	}
+	anns := v.goals.SectionAnnotations[key]
+	if len(anns) == 0 {
+		return ""
+	}
+	return " " + dimStyle.Render(fmt.Sprintf("[%d]", len(anns)))
+}
+
+// scrollToCursor adjusts scrollY so the cursored item is visible.
+func (v *TeamReportView) scrollToCursor() {
+	if v.cursorIdx < 0 || v.cursorIdx >= len(v.cursorLines) {
+		return
+	}
+	line := v.cursorLines[v.cursorIdx]
+	if line < v.scrollY {
+		v.scrollY = line
+	} else if line >= v.scrollY+v.pageSize() {
+		v.scrollY = line - v.pageSize() + 1
+	}
+}
+
+// snapCursorToVisible moves the cursor to the topmost annotatable item
+// that is currently visible (at or after scrollY).
+func (v *TeamReportView) snapCursorToVisible() {
+	for i, line := range v.cursorLines {
+		if line >= v.scrollY {
+			v.cursorIdx = i
+			return
+		}
+	}
+	if len(v.cursorLines) > 0 {
+		v.cursorIdx = len(v.cursorLines) - 1
+	}
+}
+
 // View implements tea.Model.
 func (v *TeamReportView) View() string {
+	// Clamp cursor in case item count changed since last render.
+	if n := len(v.annotateItems()); v.cursorIdx >= n {
+		v.cursorIdx = n - 1
+	}
+	if v.cursorIdx < 0 {
+		v.cursorIdx = 0
+	}
+
 	content := v.renderContent()
 	lines := strings.Split(content, "\n")
 
@@ -391,7 +491,7 @@ func (v *TeamReportView) View() string {
 		scrollIndicator = "  " + dimStyle.Render(fmt.Sprintf("%d%%", pct))
 	}
 
-	footer := "\n" + dimStyle.Render("  j/k scroll  ·  d/u page  ·  r sync  ·  t tag tasks  ·  a annotate  ·  Esc back") + scrollIndicator + "\n"
+	footer := "\n" + dimStyle.Render("  j/k cursor  ·  d/u page  ·  a annotate  ·  r sync  ·  t tag tasks  ·  Esc back") + scrollIndicator + "\n"
 	return visible + footer
 }
 
@@ -413,13 +513,34 @@ func (v *TeamReportView) wrapWidth() int {
 	if w < 60 {
 		return 60
 	}
+	if w > 120 {
+		return 120
+	}
 	return w
 }
 
 func (v *TeamReportView) renderContent() string {
 	var sb strings.Builder
 
+	// Cursor tracking: record the line number of each annotatable item as we render.
+	newCursorLines := make([]int, 0, 20)
+	annotateIdx := 0
+	markLine := func() {
+		newCursorLines = append(newCursorLines, strings.Count(sb.String(), "\n"))
+	}
+	cursorMark := func() string {
+		idx := annotateIdx
+		annotateIdx++
+		if idx == v.cursorIdx {
+			return "> "
+		}
+		return "  "
+	}
+
 	sb.WriteString("\n  " + selectedStyle.Render(v.teamName) + "\n")
+
+	markLine()
+	sb.WriteString(cursorMark() + dimStyle.Render("[Team annotation]") + v.sectionBadge("team") + "\n")
 
 	if v.syncMsg != "" {
 		style := syncBannerStyle
@@ -435,20 +556,28 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n")
 
 	// ── Business Goals ────────────────────────────────────────────────────
-	sb.WriteString(sectionHeadingStyle.Render("  Business Goals") + "\n\n")
-	if v.goalsLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.goalsErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.goalsErr) + "\n")
-	} else if v.goals == nil || len(v.goals.BusinessGoals) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		for _, g := range v.goals.BusinessGoals {
-			badge := goalStatusBadge(g.Status)
-			sb.WriteString("  " + badge + " " + g.Text + "\n")
-			if g.Note != "" {
-				for _, line := range wordWrap(g.Note, v.wrapWidth()) {
-					sb.WriteString("    " + dimStyle.Render(line) + "\n")
+	{
+		hasItems := v.goals != nil && len(v.goals.BusinessGoals) > 0
+		bizCursor := "  "
+		if hasItems {
+			markLine()
+			bizCursor = cursorMark()
+		}
+		sb.WriteString(bizCursor + sectionHeadingStyle.Render("Business Goals") + v.sectionBadge("section:business_goals") + "\n\n")
+		if v.goalsLoading {
+			sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+		} else if v.goalsErr != "" {
+			sb.WriteString(errorStyle.Render("  Error: "+v.goalsErr) + "\n")
+		} else if !hasItems {
+			sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
+		} else {
+			for _, g := range v.goals.BusinessGoals {
+				badge := goalStatusBadge(g.Status)
+				sb.WriteString("  " + badge + " " + g.Text + "\n")
+				if g.Note != "" {
+					for _, line := range wordWrap(g.Note, v.wrapWidth()) {
+						sb.WriteString("    " + noteStyle.Render(line) + "\n")
+					}
 				}
 			}
 		}
@@ -457,57 +586,65 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Sprint Status ─────────────────────────────────────────────────────
-	sb.WriteString(sectionHeadingStyle.Render("  Sprint Status") + "\n\n")
-	if v.sprintLoading || v.goalsLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.sprintErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.sprintErr) + "\n")
-	} else {
-		// Sprint header line
-		if v.sprint != nil {
-			totalStr := fmt.Sprintf("%d", v.sprint.TotalSprints)
-			if v.sprint.TotalSprints > 4 {
-				totalStr = warningAmberStyle.Render(totalStr)
-			}
-			header := fmt.Sprintf("  Week %d of %s", v.sprint.CurrentSprint, totalStr)
-			if end := v.sprintEndDate(); end != "" {
-				header += dimStyle.Render(" · ends "+end)
-			}
-			if v.sprint.PlanTitle != "" {
-				planStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
-				header += dimStyle.Render("  ·  ") + planStyle.Render(v.sprint.PlanTitle)
-			}
-			sb.WriteString(header + "\n")
-			if v.sprint.StartDateMissing {
-				sb.WriteString(warningAmberStyle.Render("  ⚠  Sprint start date not found. Add it to the plan doc or annotate it in Config.") + "\n")
-			}
-			if v.sprint.NextPlanStartRisk {
-				sb.WriteString(errorStyle.Render(fmt.Sprintf("  ✗  Plan extended to sprint %d — delays next plan start.", v.sprint.TotalSprints)) + "\n")
-			}
+	{
+		hasSprintGoals := v.goals != nil && len(v.goals.SprintGoals) > 0
+		sprintCursor := "  "
+		if hasSprintGoals {
+			markLine()
+			sprintCursor = cursorMark()
 		}
-
-		// Sprint goals with status
-		if v.goals != nil {
-			if len(v.goals.SprintGoals) == 0 {
-				sb.WriteString(dimStyle.Render("\n  (no sprint goals)") + "\n")
-			} else {
-				sb.WriteString("\n")
-				for _, g := range v.goals.SprintGoals {
-					badge := sprintGoalStatusBadge(g.Status)
-					sb.WriteString("  " + badge + " " + g.Text + "\n")
-					if g.Note != "" {
-						for _, line := range wordWrap(g.Note, v.wrapWidth()) {
-							sb.WriteString("    " + dimStyle.Render(line) + "\n")
-						}
-					}
+		sb.WriteString(sprintCursor + sectionHeadingStyle.Render("Sprint Status") + v.sectionBadge("section:sprint_goals") + "\n\n")
+		if v.sprintLoading || v.goalsLoading {
+			sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+		} else if v.sprintErr != "" {
+			sb.WriteString(errorStyle.Render("  Error: "+v.sprintErr) + "\n")
+		} else {
+			// Sprint header line
+			if v.sprint != nil {
+				totalStr := fmt.Sprintf("%d", v.sprint.TotalSprints)
+				if v.sprint.TotalSprints > 4 {
+					totalStr = warningAmberStyle.Render(totalStr)
+				}
+				header := fmt.Sprintf("  Week %d of %s", v.sprint.CurrentSprint, totalStr)
+				if end := v.sprintEndDate(); end != "" {
+					header += dimStyle.Render(" · ends "+end)
+				}
+				if v.sprint.PlanTitle != "" {
+					planStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
+					header += dimStyle.Render("  ·  ") + planStyle.Render(v.sprint.PlanTitle)
+				}
+				sb.WriteString(header + "\n")
+				if v.sprint.StartDateMissing {
+					sb.WriteString(warningAmberStyle.Render("  ⚠  Sprint start date not found. Add it to the plan doc or annotate it in Config.") + "\n")
+				}
+				if v.sprint.NextPlanStartRisk {
+					sb.WriteString(errorStyle.Render(fmt.Sprintf("  ✗  Plan extended to sprint %d — delays next plan start.", v.sprint.TotalSprints)) + "\n")
 				}
 			}
 
-			// Forecast paragraph
-			if v.goals.SprintForecast != "" {
-				sb.WriteString("\n")
-				for _, line := range wordWrap(v.goals.SprintForecast, v.wrapWidth()) {
-					sb.WriteString("  " + dimStyle.Render(line) + "\n")
+			// Sprint goals with status
+			if v.goals != nil {
+				if len(v.goals.SprintGoals) == 0 {
+					sb.WriteString(dimStyle.Render("\n  (no sprint goals)") + "\n")
+				} else {
+					sb.WriteString("\n")
+					for _, g := range v.goals.SprintGoals {
+						badge := sprintGoalStatusBadge(g.Status)
+						sb.WriteString("  " + badge + " " + g.Text + "\n")
+						if g.Note != "" {
+							for _, line := range wordWrap(g.Note, v.wrapWidth()) {
+								sb.WriteString("    " + noteStyle.Render(line) + "\n")
+							}
+						}
+					}
+				}
+
+				// Forecast paragraph
+				if v.goals.SprintForecast != "" {
+					sb.WriteString("\n")
+					for _, line := range wordWrap(v.goals.SprintForecast, v.wrapWidth()) {
+						sb.WriteString("  " + noteStyle.Render(line) + "\n")
+					}
 				}
 			}
 		}
@@ -516,41 +653,49 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Concerns ──────────────────────────────────────────────────────────
-	sb.WriteString(sectionHeadingStyle.Render("  Concerns") + "\n\n")
-	if v.goalsLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.goalsErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.goalsErr) + "\n")
-	} else if v.goals == nil || len(v.goals.Concerns) == 0 {
-		sb.WriteString(dimStyle.Render("  (no concerns)") + "\n")
-	} else {
-		for _, c := range v.goals.Concerns {
-			var severityStr string
-			if strings.HasPrefix(c.Key, "stale_annotation_") {
-				severityStr = warningAmberStyle.Render("[STALE]")
-			} else {
-				switch strings.ToUpper(c.Severity) {
-				case "HIGH":
-					severityStr = riskHighStyle.Render("[HIGH]  ")
-				case "MEDIUM":
-					severityStr = riskMediumStyle.Render("[MEDIUM]")
-				case "LOW":
-					severityStr = dimStyle.Render("[LOW]   ")
-				default:
-					severityStr = "[" + c.Severity + "]"
+	{
+		hasConcerns := v.goals != nil && len(v.goals.Concerns) > 0
+		concernsCursor := "  "
+		if hasConcerns {
+			markLine()
+			concernsCursor = cursorMark()
+		}
+		sb.WriteString(concernsCursor + sectionHeadingStyle.Render("Concerns") + v.sectionBadge("section:concerns") + "\n\n")
+		if v.goalsLoading {
+			sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+		} else if v.goalsErr != "" {
+			sb.WriteString(errorStyle.Render("  Error: "+v.goalsErr) + "\n")
+		} else if !hasConcerns {
+			sb.WriteString(dimStyle.Render("  (no concerns)") + "\n")
+		} else {
+			for _, c := range v.goals.Concerns {
+				var severityStr string
+				if strings.HasPrefix(c.Key, "stale_annotation_") {
+					severityStr = warningAmberStyle.Render("[STALE]")
+				} else {
+					switch strings.ToUpper(c.Severity) {
+					case "HIGH":
+						severityStr = riskHighStyle.Render("[HIGH]  ")
+					case "MEDIUM":
+						severityStr = riskMediumStyle.Render("[MEDIUM]")
+					case "LOW":
+						severityStr = dimStyle.Render("[LOW]   ")
+					default:
+						severityStr = "[" + c.Severity + "]"
+					}
 				}
-			}
-			scopeStr := ""
-			switch strings.ToLower(c.Scope) {
-			case "strategic":
-				scopeStr = " " + dimStyle.Render("[STRATEGIC]")
-			case "sprint":
-				scopeStr = " " + dimStyle.Render("[SPRINT]   ")
-			}
-			sb.WriteString("  " + severityStr + scopeStr + " " + c.Summary + "\n")
-			if c.Explanation != "" {
-				for _, line := range wordWrap(c.Explanation, v.wrapWidth()) {
-					sb.WriteString("    " + dimStyle.Render(line) + "\n")
+				scopeStr := ""
+				switch strings.ToLower(c.Scope) {
+				case "strategic":
+					scopeStr = " " + dimStyle.Render("[STRATEGIC]")
+				case "sprint":
+					scopeStr = " " + dimStyle.Render("[SPRINT]   ")
+				}
+				sb.WriteString("  " + severityStr + scopeStr + " " + c.Summary + "\n")
+				if c.Explanation != "" {
+					for _, line := range wordWrap(c.Explanation, v.wrapWidth()) {
+						sb.WriteString("    " + noteStyle.Render(line) + "\n")
+					}
 				}
 			}
 		}
@@ -559,7 +704,7 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Resource / Workload ───────────────────────────────────────────────
-	sb.WriteString(sectionHeadingStyle.Render("  Resource / Workload") + "\n\n")
+	sb.WriteString("  " + sectionHeadingStyle.Render("Resource / Workload") + "\n\n")
 	if v.workloadLoading {
 		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
 	} else if v.workloadErr != "" {
@@ -585,7 +730,7 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Velocity ──────────────────────────────────────────────────────────
-	sb.WriteString(sectionHeadingStyle.Render("  Velocity") + "\n\n")
+	sb.WriteString("  " + sectionHeadingStyle.Render("Velocity") + "\n\n")
 	if v.velocityLoading {
 		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
 	} else if v.velocityErr != "" {
@@ -605,7 +750,7 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Business Metrics ──────────────────────────────────────────────────
-	sb.WriteString(sectionHeadingStyle.Render("  Business Metrics") + "\n\n")
+	sb.WriteString("  " + sectionHeadingStyle.Render("Business Metrics") + "\n\n")
 	if v.metricsLoading {
 		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
 	} else if v.metricsErr != "" {
@@ -623,5 +768,6 @@ func (v *TeamReportView) renderContent() string {
 	}
 
 	sb.WriteString("\n")
+	v.cursorLines = newCursorLines
 	return sb.String()
 }

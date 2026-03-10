@@ -263,9 +263,10 @@ type TeamMemberItem struct {
 
 // TeamItem is returned as part of GetTeams.
 type TeamItem struct {
-	ID      int64            `json:"id"`
-	Name    string           `json:"name"`
-	Members []TeamMemberItem `json:"members"`
+	ID             int64            `json:"id"`
+	Name           string           `json:"name"`
+	MarketingLabel *string          `json:"marketing_label,omitempty"`
+	Members        []TeamMemberItem `json:"members"`
 }
 
 // SprintResponse is returned by GetSprint.
@@ -285,34 +286,40 @@ type SprintResponse struct {
 // BusinessGoalItem is a business-level goal with a status assessment.
 type BusinessGoalItem struct {
 	Text   string `json:"text"`
-	Status string `json:"status"` // on_track|at_risk|behind
+	Status string `json:"status"` // on_track|at_risk|behind|unclear
 	Note   string `json:"note"`
 }
 
 // SprintGoalItem is a sprint-level goal with a completion forecast.
 type SprintGoalItem struct {
 	Text   string `json:"text"`
-	Status string `json:"status"` // likely_done|at_risk|unclear
+	Status string `json:"status"` // on_track|at_risk|unclear
 	Note   string `json:"note"`
 }
 
 // ConcernItem is a single concern in GoalsResponse.
 type ConcernItem struct {
-	Key          string  `json:"key"`
-	Summary      string  `json:"summary"`
-	Explanation  string  `json:"explanation"`
-	Severity     string  `json:"severity"`
-	Scope        string  `json:"scope"` // strategic|sprint
-	AnnotationID *int64  `json:"annotation_id"`
+	Key         string `json:"key"`
+	Summary     string `json:"summary"`
+	Explanation string `json:"explanation"`
+	Severity    string `json:"severity"`
+	Scope       string `json:"scope"` // strategic|sprint
+}
+
+// SectionAnnotation is one annotation belonging to a named section.
+type SectionAnnotation struct {
+	ID      int64  `json:"id"`
+	Content string `json:"content"`
 }
 
 // GoalsResponse is returned by GetGoals.
 type GoalsResponse struct {
-	BusinessGoals  []BusinessGoalItem `json:"business_goals"`
-	SprintGoals    []SprintGoalItem   `json:"sprint_goals"`
-	SprintForecast string             `json:"sprint_forecast"`
-	Concerns       []ConcernItem      `json:"concerns"`
-	LastSyncedAt   *string            `json:"last_synced_at"`
+	BusinessGoals      []BusinessGoalItem            `json:"business_goals"`
+	SprintGoals        []SprintGoalItem              `json:"sprint_goals"`
+	SprintForecast     string                        `json:"sprint_forecast"`
+	Concerns           []ConcernItem                 `json:"concerns"`
+	SectionAnnotations map[string][]SectionAnnotation `json:"section_annotations"`
+	LastSyncedAt       *string                       `json:"last_synced_at"`
 }
 
 // WorkloadMember is a member entry in WorkloadResponse.
@@ -418,6 +425,7 @@ type TeamConfigSlotItem struct {
 type TeamConfigSlotsResponse struct {
 	TeamID           int64                          `json:"team_id"`
 	TeamName         string                         `json:"team_name"`
+	MarketingLabel   *string                        `json:"marketing_label,omitempty"`
 	ExtractionStatus string                         `json:"extraction_status"`
 	Slots            map[string][]TeamConfigSlotItem `json:"slots"`
 }
@@ -898,6 +906,40 @@ func (c *Client) PutConfigTeam(id int64, name string) (*TeamConfigResponse, erro
 	}
 	var result TeamConfigResponse
 	return &result, decodeJSON(resp, &result)
+}
+
+// GetTeamMarketingLabels returns the available project label options from the
+// team's configured marketing calendar Notion database.
+func (c *Client) GetTeamMarketingLabels(teamID int64) ([]string, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("%s/teams/%d/marketing-labels", c.serverAddr, teamID), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result struct {
+		Labels []string `json:"labels"`
+	}
+	return result.Labels, decodeJSON(resp, &result)
+}
+
+// PutTeamMarketingLabel sets or clears the marketing label for a team.
+// Pass an empty string to clear the label.
+func (c *Client) PutTeamMarketingLabel(id int64, label string) error {
+	var labelPtr *string
+	if label != "" {
+		labelPtr = &label
+	}
+	body, err := json.Marshal(map[string]any{"label": labelPtr})
+	if err != nil {
+		return err
+	}
+	resp, err := c.doRequest("PUT", fmt.Sprintf("%s/config/teams/%d/marketing-label", c.serverAddr, id), body)
+	if err != nil {
+		return err
+	}
+	return checkStatus(resp, http.StatusOK)
 }
 
 // DeleteConfigTeam deletes a team.

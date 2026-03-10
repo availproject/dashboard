@@ -32,25 +32,30 @@ var slotDisplayOrder = []string{
 	"goals_doc",
 	"sprint_doc",
 	"github_repo",
+	"github_project",
 	"metrics_panel",
 	"task_label",
+	"marketing_calendar",
 }
 
 var slotLabels = map[string]string{
-	"project_homepage": "Project Homepage",
-	"goals_doc":        "Goals Doc",
-	"sprint_doc":       "Sprint Plans",
-	"github_repo":      "GitHub Repos",
-	"metrics_panel":    "Metrics",
-	"task_label":       "Task Label",
+	"project_homepage":   "Project Homepage",
+	"goals_doc":          "Goals Doc",
+	"sprint_doc":         "Sprint Plans",
+	"github_repo":        "GitHub Repos",
+	"github_project":     "Project Board",
+	"metrics_panel":      "Metrics",
+	"task_label":         "Task Label",
+	"marketing_calendar": "Marketing Calendar",
 }
 
 // slotIsAuto indicates which slots are auto-configured from the homepage.
 var slotIsAuto = map[string]bool{
-	"goals_doc":     true,
-	"sprint_doc":    true,
-	"github_repo":   true,
-	"metrics_panel": true,
+	"goals_doc":      true,
+	"sprint_doc":     true,
+	"github_repo":    true,
+	"github_project": true,
+	"metrics_panel":  true,
 }
 
 // ConfigTeamSlotsView shows the team slot configuration overview.
@@ -199,8 +204,14 @@ func (v *ConfigTeamSlotsView) pushSlotView() tea.Cmd {
 			current = &items[0]
 		}
 		subView = NewConfigHomepageSlotView(v.c, v.teamID, v.teamName, current)
-	case "goals_doc", "task_label":
+	case "goals_doc", "github_project", "task_label":
 		subView = NewConfigSingleSlotView(v.c, v.teamID, v.teamName, purpose, items)
+	case "marketing_calendar":
+		var currentLabel *string
+		if v.data != nil {
+			currentLabel = v.data.MarketingLabel
+		}
+		subView = NewConfigMarketingSlotView(v.c, v.teamID, v.teamName, items, currentLabel)
 	default:
 		subView = NewConfigMultiSlotView(v.c, v.teamID, v.teamName, purpose, items)
 	}
@@ -244,6 +255,10 @@ func (v *ConfigTeamSlotsView) View() string {
 		// Show divider before manual section.
 		if purpose == "task_label" {
 			sb.WriteString("\n  " + cfgDimStyle.Render("─── Manual ─────────────────────────────────") + "\n")
+		}
+		// Show divider before marketing section.
+		if purpose == "marketing_calendar" {
+			sb.WriteString("\n  " + cfgDimStyle.Render("─── Marketing ───────────────────────────────") + "\n")
 		}
 
 		label := slotLabels[purpose]
@@ -315,6 +330,15 @@ func (v *ConfigTeamSlotsView) slotSummary(purpose string) string {
 			return fmt.Sprintf("%s (+%d more)", truncate(first, 30), extra)
 		}
 		return truncate(first, 40)
+	case "github_project":
+		if len(items) == 0 {
+			return "(none)"
+		}
+		title := items[0].Title
+		if items[0].URL != nil {
+			title = *items[0].URL
+		}
+		return truncate(title, 40)
 	case "metrics_panel":
 		if len(items) == 0 {
 			if v.data.ExtractionStatus == "done" {
@@ -328,6 +352,11 @@ func (v *ConfigTeamSlotsView) slotSummary(purpose string) string {
 			return fmt.Sprintf("%s (+%d more)", label, extra)
 		}
 		return label
+	case "marketing_calendar":
+		if len(items) == 0 {
+			return "(none)"
+		}
+		return truncate(items[0].Title, 40)
 	}
 	return ""
 }

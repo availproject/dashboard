@@ -85,22 +85,17 @@ func (v *GoalsView) pushAnnotate() tea.Cmd {
 	}
 	nBiz := len(v.data.BusinessGoals)
 	nSprint := len(v.data.SprintGoals)
-	var itemRef, label string
+	var sectionRef string
 	switch {
 	case v.cursor < nBiz:
-		g := v.data.BusinessGoals[v.cursor]
-		itemRef = g.Text
-		label = g.Text
+		sectionRef = "section:business_goals"
 	case v.cursor < nBiz+nSprint:
-		g := v.data.SprintGoals[v.cursor-nBiz]
-		itemRef = g.Text
-		label = g.Text
+		sectionRef = "section:sprint_goals"
 	default:
-		c := v.data.Concerns[v.cursor-nBiz-nSprint]
-		itemRef = c.Key
-		label = c.Summary
+		sectionRef = "section:concerns"
 	}
-	av := NewAnnotateView(v.c, v.teamID, "item", itemRef, label)
+	existing := v.data.SectionAnnotations[sectionRef]
+	av := NewSectionAnnotateView(v.c, v.teamID, "item", sectionRef, existing)
 	return func() tea.Msg { return PushViewMsg{View: av} }
 }
 

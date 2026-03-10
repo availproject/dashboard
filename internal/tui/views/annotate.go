@@ -1,6 +1,7 @@
 package views
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -9,136 +10,300 @@ import (
 	"github.com/your-org/dashboard/internal/tui/msgs"
 )
 
+// annotatePickItem describes one annotatable item on the team dashboard.
+// itemRef holds the section key (e.g. "section:concerns", "" for team-level).
+type annotatePickItem struct {
+	tier    string // "item" or "team"
+	itemRef string // section ref
+	label   string // item display label for cursor in dashboard
+}
+
 // PopViewMsg is an alias kept for backward compatibility; use msgs.PopViewMsg directly.
 type PopViewMsg = msgs.PopViewMsg
 
-// annotateSubmitMsg is sent when the annotation POST completes.
-type annotateSubmitMsg struct{ err error }
+// ── Section annotation editor ─────────────────────────────────────────────────
 
-// AnnotateView is a pushed view for creating an annotation on an item.
-type AnnotateView struct {
-	c       *client.Client
-	teamID  int64
-	tier    string // "item" or "team"
-	itemRef string
-	label   string
-	ta      textarea.Model
-	loading bool
-	errMsg  string
+type saMode int
+
+const (
+	saModeList saMode = iota
+	saModeEdit
+)
+
+// sectionSavedMsg is sent when a POST/PUT annotation call completes.
+type sectionSavedMsg struct {
+	annotation client.SectionAnnotation
+	editIdx    int // -1 = new item was appended
+	err        error
 }
 
-// NewAnnotateView creates an AnnotateView. tier should be "item" or "team".
-func NewAnnotateView(c *client.Client, teamID int64, tier, itemRef, label string) *AnnotateView {
+// sectionDeletedMsg is sent when a DELETE annotation call completes.
+type sectionDeletedMsg struct {
+	idx int
+	err error
+}
+
+// SectionAnnotateView is an editor for all annotations belonging to one section.
+// It shows existing bullets in list mode and opens a textarea in edit mode.
+type SectionAnnotateView struct {
+	c          *client.Client
+	teamID     int64
+	tier       string // "item" or "team"
+	sectionRef string // item_ref stored in DB; "" for team-level
+	name       string // display name, e.g. "Concerns"
+	items      []client.SectionAnnotation
+	cursor     int    // 0..len(items); len(items) = [+ Add]
+	mode       saMode
+	editIdx    int // index being edited; -1 for a new annotation
+	ta         textarea.Model
+	loading    bool
+	errMsg     string
+}
+
+// sectionName derives a human-readable name from a section ref.
+func sectionName(ref string) string {
+	switch ref {
+	case "section:concerns":
+		return "Concerns"
+	case "section:sprint_goals":
+		return "Sprint Goals"
+	case "section:business_goals":
+		return "Business Goals"
+	default:
+		return "Team"
+	}
+}
+
+// NewSectionAnnotateView creates the editor for the given section.
+func NewSectionAnnotateView(c *client.Client, teamID int64, tier, sectionRef string, existing []client.SectionAnnotation) *SectionAnnotateView {
+	items := make([]client.SectionAnnotation, len(existing))
+	copy(items, existing)
+	return &SectionAnnotateView{
+		c:          c,
+		teamID:     teamID,
+		tier:       tier,
+		sectionRef: sectionRef,
+		name:       sectionName(sectionRef),
+		items:      items,
+		cursor:     len(items), // start on [+ Add]
+		editIdx:    -1,
+	}
+}
+
+func newTA() textarea.Model {
 	ta := textarea.New()
 	ta.Placeholder = "Enter annotation…"
 	ta.Focus()
 	ta.SetWidth(60)
-	ta.SetHeight(5)
-	return &AnnotateView{
-		c:       c,
-		teamID:  teamID,
-		tier:    tier,
-		itemRef: itemRef,
-		label:   label,
-		ta:      ta,
-	}
+	ta.SetHeight(4)
+	return ta
 }
 
-// Init implements tea.Model.
-func (v *AnnotateView) Init() tea.Cmd {
-	return textarea.Blink
+// InterceptsBackspace tells the App not to treat backspace as navigation
+// when the textarea is active.
+func (v *SectionAnnotateView) InterceptsBackspace() bool {
+	return v.mode == saModeEdit
 }
 
-// Update implements tea.Model.
-func (v *AnnotateView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (v *SectionAnnotateView) Init() tea.Cmd { return nil }
+
+func (v *SectionAnnotateView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.KeyMsg:
 		if v.loading {
 			return v, nil
 		}
-		switch m.String() {
-		case "tab":
-			if v.tier == "item" {
-				v.tier = "team"
-			} else {
-				v.tier = "item"
-			}
-			return v, nil
-		case "ctrl+enter":
-			content := strings.TrimSpace(v.ta.Value())
-			if content == "" {
-				v.errMsg = "annotation cannot be empty"
-				return v, nil
-			}
-			v.loading = true
-			v.errMsg = ""
-			return v, v.doSubmit(content)
+		if v.mode == saModeEdit {
+			return v.updateEdit(m)
 		}
+		return v.updateList(m)
 
-	case annotateSubmitMsg:
+	case sectionSavedMsg:
 		v.loading = false
 		if m.err != nil {
 			v.errMsg = m.err.Error()
 			return v, nil
 		}
-		return v, func() tea.Msg { return PopViewMsg{} }
+		v.errMsg = ""
+		if m.editIdx == -1 {
+			v.items = append(v.items, m.annotation)
+			v.cursor = len(v.items) - 1
+		} else {
+			v.items[m.editIdx] = m.annotation
+			v.cursor = m.editIdx
+		}
+		v.mode = saModeList
+		return v, nil
+
+	case sectionDeletedMsg:
+		v.loading = false
+		if m.err != nil {
+			v.errMsg = m.err.Error()
+			return v, nil
+		}
+		v.errMsg = ""
+		v.items = append(v.items[:m.idx], v.items[m.idx+1:]...)
+		if v.cursor > len(v.items) {
+			v.cursor = len(v.items)
+		}
+		return v, nil
 	}
 
-	// Forward all other messages to the textarea.
+	if v.mode == saModeEdit {
+		var cmd tea.Cmd
+		v.ta, cmd = v.ta.Update(msg)
+		return v, cmd
+	}
+	return v, nil
+}
+
+func (v *SectionAnnotateView) updateList(m tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.String() {
+	case "j", "down":
+		if v.cursor < len(v.items) {
+			v.cursor++
+		}
+	case "k", "up":
+		if v.cursor > 0 {
+			v.cursor--
+		}
+	case "n":
+		v.openEdit(-1, "")
+	case "enter":
+		if v.cursor == len(v.items) {
+			v.openEdit(-1, "")
+		} else {
+			v.openEdit(v.cursor, v.items[v.cursor].Content)
+		}
+	case "d":
+		if v.cursor < len(v.items) {
+			idx := v.cursor
+			id := v.items[idx].ID
+			v.loading = true
+			return v, func() tea.Msg {
+				err := v.c.DeleteAnnotation(id)
+				return sectionDeletedMsg{idx: idx, err: err}
+			}
+		}
+	}
+	return v, nil
+}
+
+func (v *SectionAnnotateView) openEdit(idx int, content string) {
+	v.editIdx = idx
+	v.ta = newTA()
+	if content != "" {
+		v.ta.SetValue(content)
+	}
+	v.mode = saModeEdit
+}
+
+func (v *SectionAnnotateView) updateEdit(m tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.String() {
+	case "ctrl+s":
+		content := strings.TrimSpace(v.ta.Value())
+		if content == "" {
+			v.errMsg = "annotation cannot be empty"
+			return v, nil
+		}
+		v.loading = true
+		v.errMsg = ""
+		idx := v.editIdx
+		if idx == -1 {
+			// New annotation
+			tid := v.teamID
+			tier := v.tier
+			var refPtr *string
+			if tier == "item" && v.sectionRef != "" {
+				r := v.sectionRef
+				refPtr = &r
+			}
+			return v, func() tea.Msg {
+				ann, err := v.c.PostAnnotation(tier, &tid, refPtr, content)
+				if err != nil {
+					return sectionSavedMsg{editIdx: -1, err: err}
+				}
+				return sectionSavedMsg{
+					annotation: client.SectionAnnotation{ID: ann.ID, Content: ann.Content},
+					editIdx:    -1,
+				}
+			}
+		}
+		// Edit existing
+		id := v.items[idx].ID
+		return v, func() tea.Msg {
+			err := v.c.PutAnnotation(id, content)
+			if err != nil {
+				return sectionSavedMsg{editIdx: idx, err: err}
+			}
+			return sectionSavedMsg{
+				annotation: client.SectionAnnotation{ID: id, Content: content},
+				editIdx:    idx,
+			}
+		}
+	case "esc":
+		v.mode = saModeList
+		v.errMsg = ""
+		return v, nil
+	}
 	var cmd tea.Cmd
-	v.ta, cmd = v.ta.Update(msg)
+	v.ta, cmd = v.ta.Update(m)
 	return v, cmd
 }
 
-func (v *AnnotateView) doSubmit(content string) tea.Cmd {
-	tid := v.teamID
-	itemRef := v.itemRef
-	tier := v.tier
-	return func() tea.Msg {
-		var itemRefPtr *string
-		if tier == "item" && itemRef != "" {
-			itemRefPtr = &itemRef
-		}
-		_, err := v.c.PostAnnotation(tier, &tid, itemRefPtr, content)
-		return annotateSubmitMsg{err: err}
-	}
-}
-
-// View implements tea.Model.
-func (v *AnnotateView) View() string {
+func (v *SectionAnnotateView) View() string {
 	var sb strings.Builder
+	sb.WriteString("\n  " + selectedStyle.Render(v.name+" annotations") + "\n\n")
 
-	sb.WriteString("\n  " + selectedStyle.Render("Annotate") + "\n\n")
-
-	label := v.label
-	if len(label) > 70 {
-		label = label[:67] + "..."
+	if v.mode == saModeEdit {
+		action := "New"
+		if v.editIdx >= 0 {
+			action = "Edit"
+		}
+		sb.WriteString("  " + dimStyle.Render(action+" annotation") + "\n\n")
+		sb.WriteString(v.ta.View() + "\n")
+		if v.errMsg != "" {
+			sb.WriteString("\n" + errorStyle.Render("  "+v.errMsg) + "\n")
+		}
+		if v.loading {
+			sb.WriteString("\n  Saving…\n")
+		} else {
+			sb.WriteString("\n" + dimStyle.Render("  Ctrl+S save  ·  Esc cancel") + "\n")
+		}
+		return sb.String()
 	}
-	sb.WriteString("  Item: " + dimStyle.Render(label) + "\n\n")
 
-	// Tier selector
-	itemLabel := "[Item-level]"
-	teamLabel := "[Team-level]"
-	if v.tier == "item" {
-		itemLabel = selectedStyle.Render(itemLabel)
-		teamLabel = dimStyle.Render(teamLabel)
-	} else {
-		itemLabel = dimStyle.Render(itemLabel)
-		teamLabel = selectedStyle.Render(teamLabel)
+	// List mode
+	if len(v.items) == 0 {
+		sb.WriteString(dimStyle.Render("  (no annotations yet)") + "\n")
 	}
-	sb.WriteString("  Tier: " + itemLabel + "  " + teamLabel + "\n\n")
+	for i, item := range v.items {
+		bullet := "  • "
+		content := item.Content
+		if len(content) > 72 {
+			content = content[:69] + "..."
+		}
+		line := bullet + content
+		if i == v.cursor {
+			line = "> • " + selectedStyle.Render(fmt.Sprintf("%-72s", content))
+		}
+		sb.WriteString(line + "\n")
+	}
 
-	sb.WriteString(v.ta.View() + "\n")
+	// [+ Add] entry
+	addLine := "  " + dimStyle.Render("[+ Add annotation]")
+	if v.cursor == len(v.items) {
+		addLine = "> " + selectedStyle.Render("[+ Add annotation]")
+	}
+	sb.WriteString(addLine + "\n")
 
 	if v.errMsg != "" {
-		sb.WriteString("\n" + errorStyle.Render("  Error: "+v.errMsg) + "\n")
+		sb.WriteString("\n" + errorStyle.Render("  "+v.errMsg) + "\n")
 	}
-
 	if v.loading {
-		sb.WriteString("\n  Saving…\n")
+		sb.WriteString("\n  Working…\n")
 	} else {
-		sb.WriteString("\n" + dimStyle.Render("  Tab to toggle tier  ·  Ctrl+Enter to submit  ·  Esc to cancel") + "\n")
+		sb.WriteString("\n" + dimStyle.Render("  j/k move  ·  Enter edit  ·  n new  ·  d delete  ·  Esc close") + "\n")
 	}
-
 	return sb.String()
 }

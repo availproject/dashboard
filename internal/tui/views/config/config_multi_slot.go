@@ -86,9 +86,14 @@ func (v *ConfigMultiSlotView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			v.errMsg = m.err.Error()
 		} else {
 			v.errMsg = ""
-			// Reload from server would be ideal; for now just remove from local list.
-			if v.cursor < len(v.items) {
-				v.items = append(v.items[:v.cursor], v.items[v.cursor+1:]...)
+			// Remove the item that was at the cursor using the same grouped order.
+			if selected, ok := v.itemAtCursor(); ok {
+				for i, it := range v.items {
+					if it.ID == selected.ID {
+						v.items = append(v.items[:i], v.items[i+1:]...)
+						break
+					}
+				}
 				if v.cursor > 0 && v.cursor >= len(v.items) {
 					v.cursor--
 				}
@@ -141,11 +146,29 @@ func (v *ConfigMultiSlotView) addItem(item client.SourceItemResponse) tea.Cmd {
 	}
 }
 
+// itemAtCursor returns the item at v.cursor using the same AI-first grouping
+// order used by View(), so that cursor positions always match the display.
+func (v *ConfigMultiSlotView) itemAtCursor() (client.TeamConfigSlotItem, bool) {
+	var aiItems, manualItems []client.TeamConfigSlotItem
+	for _, it := range v.items {
+		if it.Provenance == "ai_extracted" {
+			aiItems = append(aiItems, it)
+		} else {
+			manualItems = append(manualItems, it)
+		}
+	}
+	grouped := append(aiItems, manualItems...)
+	if v.cursor >= len(grouped) {
+		return client.TeamConfigSlotItem{}, false
+	}
+	return grouped[v.cursor], true
+}
+
 func (v *ConfigMultiSlotView) removeItem() tea.Cmd {
-	if len(v.items) == 0 || v.cursor >= len(v.items) {
+	item, ok := v.itemAtCursor()
+	if !ok {
 		return nil
 	}
-	item := v.items[v.cursor]
 	c := v.c
 	configID := item.ID
 	catalogueID := item.CatalogueID
