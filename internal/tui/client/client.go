@@ -368,6 +368,61 @@ type MetricsResponse struct {
 	LastSyncedAt *string        `json:"last_synced_at"`
 }
 
+// ActivityCommit is a single commit entry in ActivityResponse.
+type ActivityCommit struct {
+	SHA     string `json:"sha"`
+	Author  string `json:"author"`
+	Message string `json:"message"`
+	Repo    string `json:"repo"`
+	Date    string `json:"date"`
+}
+
+// ActivityIssue is a single open issue in ActivityResponse.
+type ActivityIssue struct {
+	Number        int    `json:"number"`
+	Title         string `json:"title"`
+	Assignee      string `json:"assignee,omitempty"`
+	ProjectStatus string `json:"project_status,omitempty"`
+}
+
+// ActivityPR is a single merged PR in ActivityResponse.
+type ActivityPR struct {
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	Author   string `json:"author"`
+	MergedAt string `json:"merged_at"`
+}
+
+// ActivityResponse is returned by GetActivity.
+type ActivityResponse struct {
+	RecentCommits []ActivityCommit `json:"recent_commits"`
+	OpenIssues    []ActivityIssue  `json:"open_issues"`
+	MergedPRs     []ActivityPR     `json:"merged_prs"`
+	LastSyncedAt  *string          `json:"last_synced_at"`
+}
+
+// MarketingTaskItem is a single task in a MarketingCampaignItem.
+type MarketingTaskItem struct {
+	Title    string `json:"title"`
+	Status   string `json:"status"`
+	Assignee string `json:"assignee,omitempty"`
+}
+
+// MarketingCampaignItem is a single campaign in MarketingResponse.
+type MarketingCampaignItem struct {
+	Title     string              `json:"title"`
+	Status    string              `json:"status"`
+	DateStart *string             `json:"date_start,omitempty"`
+	DateEnd   *string             `json:"date_end,omitempty"`
+	Tasks     []MarketingTaskItem `json:"tasks"`
+}
+
+// MarketingResponse is returned by GetMarketing.
+type MarketingResponse struct {
+	Campaigns    []MarketingCampaignItem `json:"campaigns"`
+	LastSyncedAt *string                 `json:"last_synced_at"`
+}
+
 // SyncRunResponse is returned by GetSyncRun.
 type SyncRunResponse struct {
 	ID     int64   `json:"ID"`
@@ -563,6 +618,32 @@ func (c *Client) GetMetrics(teamID int64) (*MetricsResponse, error) {
 		return nil, err
 	}
 	var result MetricsResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// GetActivity returns engineering activity for the given team.
+func (c *Client) GetActivity(teamID int64) (*ActivityResponse, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("%s/teams/%d/activity", c.serverAddr, teamID), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result ActivityResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// GetMarketing returns marketing campaign data for the given team.
+func (c *Client) GetMarketing(teamID int64) (*MarketingResponse, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("%s/teams/%d/marketing", c.serverAddr, teamID), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result MarketingResponse
 	return &result, decodeJSON(resp, &result)
 }
 

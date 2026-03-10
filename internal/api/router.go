@@ -55,6 +55,8 @@ func NewRouter(deps *Deps) http.Handler {
 		r.Get("/teams/{id}/workload", deps.handleTeamWorkload)
 		r.Get("/teams/{id}/velocity", deps.handleTeamVelocity)
 		r.Get("/teams/{id}/metrics", deps.handleTeamMetrics)
+		r.Get("/teams/{id}/activity", deps.handleGetTeamActivity)
+		r.Get("/teams/{id}/marketing", deps.handleGetTeamMarketing)
 		r.Get("/teams/{id}/config", deps.handleGetTeamConfig)
 		r.Get("/teams/{id}/marketing-labels", deps.handleGetMarketingLabels)
 		r.Get("/sync/{run_id}", deps.handleGetSyncRun)

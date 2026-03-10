@@ -42,23 +42,29 @@ type TeamReportView struct {
 	teamID   int64
 	teamName string
 
-	sprint   *client.SprintResponse
-	goals    *client.GoalsResponse
-	workload *client.WorkloadResponse
-	velocity *client.VelocityResponse
-	metrics  *client.MetricsResponse
+	sprint    *client.SprintResponse
+	goals     *client.GoalsResponse
+	workload  *client.WorkloadResponse
+	velocity  *client.VelocityResponse
+	metrics   *client.MetricsResponse
+	activity  *client.ActivityResponse
+	marketing *client.MarketingResponse
 
-	sprintLoading   bool
-	goalsLoading    bool
-	workloadLoading bool
-	velocityLoading bool
-	metricsLoading  bool
+	sprintLoading    bool
+	goalsLoading     bool
+	workloadLoading  bool
+	velocityLoading  bool
+	metricsLoading   bool
+	activityLoading  bool
+	marketingLoading bool
 
-	sprintErr   string
-	goalsErr    string
-	workloadErr string
-	velocityErr string
-	metricsErr  string
+	sprintErr    string
+	goalsErr     string
+	workloadErr  string
+	velocityErr  string
+	metricsErr   string
+	activityErr  string
+	marketingErr string
 
 	scrollY     int
 	cursorIdx   int
@@ -76,16 +82,28 @@ type TeamReportView struct {
 // NewTeamView creates a TeamReportView for the given team.
 func NewTeamView(c *client.Client, teamID int64, name string) *TeamReportView {
 	return &TeamReportView{
-		c:               c,
-		teamID:          teamID,
-		teamName:        name,
-		sprintLoading:   true,
-		goalsLoading:    true,
-		workloadLoading: true,
-		velocityLoading: true,
-		metricsLoading:  true,
-		height:          40,
+		c:                c,
+		teamID:           teamID,
+		teamName:         name,
+		sprintLoading:    true,
+		goalsLoading:     true,
+		workloadLoading:  true,
+		velocityLoading:  true,
+		metricsLoading:   true,
+		activityLoading:  true,
+		marketingLoading: true,
+		height:           40,
 	}
+}
+
+type activityLoadedMsg struct {
+	data *client.ActivityResponse
+	err  error
+}
+
+type marketingLoadedMsg struct {
+	data *client.MarketingResponse
+	err  error
 }
 
 // Init implements tea.Model — load all sections in parallel.
@@ -110,6 +128,14 @@ func (v *TeamReportView) Init() tea.Cmd {
 		func() tea.Msg {
 			data, err := v.c.GetMetrics(v.teamID)
 			return metricsLoadedMsg{data: data, err: err}
+		},
+		func() tea.Msg {
+			data, err := v.c.GetActivity(v.teamID)
+			return activityLoadedMsg{data: data, err: err}
+		},
+		func() tea.Msg {
+			data, err := v.c.GetMarketing(v.teamID)
+			return marketingLoadedMsg{data: data, err: err}
 		},
 	)
 }
@@ -170,6 +196,8 @@ func (v *TeamReportView) reload() tea.Cmd {
 	v.workloadLoading = true
 	v.velocityLoading = true
 	v.metricsLoading = true
+	v.activityLoading = true
+	v.marketingLoading = true
 	return v.Init()
 }
 
@@ -228,6 +256,26 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			v.metrics = m.data
 			v.metricsErr = ""
+		}
+		return v, nil
+
+	case activityLoadedMsg:
+		v.activityLoading = false
+		if m.err != nil {
+			v.activityErr = m.err.Error()
+		} else {
+			v.activity = m.data
+			v.activityErr = ""
+		}
+		return v, nil
+
+	case marketingLoadedMsg:
+		v.marketingLoading = false
+		if m.err != nil {
+			v.marketingErr = m.err.Error()
+		} else {
+			v.marketing = m.data
+			v.marketingErr = ""
 		}
 		return v, nil
 
@@ -365,6 +413,13 @@ func sprintGoalStatusBadge(status string) string {
 	default:
 		return dimStyle.Render("[" + status + "]")
 	}
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }
 
 func wordWrap(text string, width int) []string {
@@ -764,6 +819,125 @@ func (v *TeamReportView) renderContent() string {
 				value = *p.Value
 			}
 			sb.WriteString("  " + selectedStyle.Render(p.Title) + "  " + value + "\n")
+		}
+	}
+
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	// ── Engineering ───────────────────────────────────────────────────────
+	sb.WriteString("  " + sectionHeadingStyle.Render("Engineering") + "\n\n")
+	if v.activityLoading {
+		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+	} else if v.activityErr != "" {
+		sb.WriteString(errorStyle.Render("  Error: "+v.activityErr) + "\n")
+	} else if v.activity == nil {
+		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
+	} else {
+		a := v.activity
+		// Summary line
+		sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
+			dimStyle.Render(fmt.Sprintf("%d commits", len(a.RecentCommits))),
+			dimStyle.Render(fmt.Sprintf("%d PRs merged", len(a.MergedPRs))),
+			dimStyle.Render(fmt.Sprintf("%d open issues", len(a.OpenIssues))),
+		))
+		sb.WriteString("\n")
+
+		// Recent commits
+		if len(a.RecentCommits) > 0 {
+			sb.WriteString("  " + noteStyle.Render("Recent Commits") + "\n")
+			for _, c := range a.RecentCommits {
+				sha := dimStyle.Render(c.SHA[:7])
+				author := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fmt.Sprintf("%-10s", c.Author))
+				repo := dimStyle.Render("[" + c.Repo + "]")
+				msg := c.Message
+				if len(msg) > v.wrapWidth()-30 {
+					msg = msg[:v.wrapWidth()-33] + "…"
+				}
+				sb.WriteString(fmt.Sprintf("  %s  %s  %s  %s\n", sha, author, msg, repo))
+			}
+			sb.WriteString("\n")
+		}
+
+		// Open issues
+		if len(a.OpenIssues) > 0 {
+			sb.WriteString("  " + noteStyle.Render("Open Issues") + "\n")
+			for _, iss := range a.OpenIssues {
+				statusStr := ""
+				if iss.ProjectStatus != "" {
+					col := lipgloss.Color("245")
+					switch iss.ProjectStatus {
+					case "In Progress":
+						col = lipgloss.Color("14")
+					case "In Review":
+						col = lipgloss.Color("12")
+					case "Done":
+						col = lipgloss.Color("10")
+					}
+					statusStr = lipgloss.NewStyle().Foreground(col).Render(fmt.Sprintf("%-12s", iss.ProjectStatus))
+				}
+				assignee := ""
+				if iss.Assignee != "" {
+					assignee = dimStyle.Render("@" + iss.Assignee)
+				}
+				sb.WriteString(fmt.Sprintf("  #%-5d  %s  %-38s  %s\n",
+					iss.Number, statusStr, truncate(iss.Title, 38), assignee))
+			}
+			sb.WriteString("\n")
+		}
+
+		// Merged PRs
+		if len(a.MergedPRs) > 0 {
+			sb.WriteString("  " + noteStyle.Render("Merged PRs") + "\n")
+			for _, pr := range a.MergedPRs {
+				author := dimStyle.Render("@" + pr.Author)
+				sb.WriteString(fmt.Sprintf("  #%-5d  %-42s  %s  %s\n",
+					pr.Number, truncate(pr.Title, 42), author, dimStyle.Render(pr.MergedAt)))
+			}
+		}
+	}
+
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	// ── Marketing ─────────────────────────────────────────────────────────
+	sb.WriteString("  " + sectionHeadingStyle.Render("Marketing") + "\n\n")
+	if v.marketingLoading {
+		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+	} else if v.marketingErr != "" {
+		sb.WriteString(errorStyle.Render("  Error: "+v.marketingErr) + "\n")
+	} else if v.marketing == nil || len(v.marketing.Campaigns) == 0 {
+		sb.WriteString(dimStyle.Render("  No campaigns. Configure a marketing_calendar source in team config.") + "\n")
+	} else {
+		for i, camp := range v.marketing.Campaigns {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			// Campaign header
+			statusCol := lipgloss.Color("245")
+			if camp.Status == "In Progress" {
+				statusCol = lipgloss.Color("14")
+			}
+			statusBadge := lipgloss.NewStyle().Foreground(statusCol).Render(camp.Status)
+			dateRange := ""
+			if camp.DateStart != nil && camp.DateEnd != nil {
+				dateRange = "  " + dimStyle.Render(*camp.DateStart+" – "+*camp.DateEnd)
+			}
+			sb.WriteString("  " + selectedStyle.Render(camp.Title) + "  " + statusBadge + dateRange + "\n")
+
+			// Tasks
+			for _, task := range camp.Tasks {
+				bullet := "  ○ "
+				if task.Status == "In Progress" {
+					bullet = "  ● "
+				} else if task.Status == "Done" || task.Status == "Complete" {
+					bullet = "  ✓ "
+				}
+				taskStatus := dimStyle.Render(fmt.Sprintf("%-14s", task.Status))
+				assignee := ""
+				if task.Assignee != "" {
+					assignee = "  " + dimStyle.Render(task.Assignee)
+				}
+				sb.WriteString(fmt.Sprintf("  %s%s  %s%s\n", bullet, truncate(task.Title, 36), taskStatus, assignee))
+			}
 		}
 	}
 
