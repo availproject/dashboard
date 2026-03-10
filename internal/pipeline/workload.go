@@ -12,8 +12,6 @@ import (
 // WorkloadPipeline is the pipeline name stored in ai_cache.
 const WorkloadPipeline = "workload"
 
-const workloadSchema = `{"members":[{"name":"string","estimated_days":0,"label":"LOW|NORMAL|HIGH"}]}`
-
 // WorkloadResult is the structured output of the workload pipeline.
 type WorkloadResult struct {
 	Members []MemberWorkload `json:"members"`

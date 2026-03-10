@@ -14,10 +14,6 @@ const DiscoverySuggestionPipeline = "discovery_suggestion"
 // LabelMatchPipeline is the pipeline name for batch label→team matching.
 const LabelMatchPipeline = "label_match"
 
-const discoverySchema = `{"suggested_purpose":"current_plan|next_plan|goals|metrics_panel|org_goals|org_milestones|unknown","confidence":"high|medium|low","reasoning":"string"}`
-
-const labelMatchSchema = `{"matches":[{"id":0,"team_name":"team name or unknown"}]}`
-
 // LabelInfo is an input item for the label_match pipeline.
 type LabelInfo struct {
 	ID   int64  `json:"id"`

@@ -1,0 +1,7 @@
+{
+  "goals_doc": "url or null",
+  "sprint_plans": [{"url":"string","title":"string","sprint_status":"current|next|archived","active_sprint_week":"number (1-based position of the active sprint within this plan, e.g. 1 for the first sprint of this plan) or null","sprint_start_date":"YYYY-MM-DD (start date of the active sprint week) or null","total_weeks_in_plan":"number (total sprint weeks in this plan) or null"}],
+  "repos": ["url"],
+  "project_boards": ["url"],
+  "metrics": ["url"]
+}

@@ -1,0 +1,1 @@
+{"business_goals":[{"text":"string","status":"on_track|at_risk|behind|unclear","note":"string"}],"sprint_goals":[{"text":"string","status":"on_track|at_risk|unclear","note":"string"}],"sprint_forecast":"string","concerns":[{"key":"string","summary":"string","explanation":"string","severity":"high|medium|low","scope":"strategic|sprint"}]}

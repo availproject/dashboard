@@ -1,0 +1,7 @@
+For each sprint plan, extract:
+- active_sprint_week: the 1-based position of the currently active sprint WITHIN THIS PLAN (not an absolute sprint number). Example: if a plan covers "Sprints 6-9" and Sprint 6 is active, active_sprint_week=1. If Sprint 7 is active, active_sprint_week=2. If the text says "first of 4 sprints", active_sprint_week=1.
+- sprint_start_date: the calendar start date of the sprint identified by active_sprint_week (i.e. when that specific sprint week began). A date shown in context like "Where we are (March 9): Sprint 6" means Sprint 6 started on March 9 — use that. If no date for the sprint is mentioned, use today's date (provided in inputs).
+- total_weeks_in_plan: total number of sprint weeks in this plan. Example: a plan labeled "Sprints 6-9" has total_weeks_in_plan=4; a plan labeled "4 sprints" also has total_weeks_in_plan=4.
+These three fields are used to compute the plan start date (sprint_start_date minus (active_sprint_week-1) weeks) and track current position over time.
+
+For project_boards: extract any GitHub project board URLs (https://github.com/orgs/{org}/projects/{n} or similar, including URLs with /views/... or query params). Include the full URL as found — it will be normalised downstream.

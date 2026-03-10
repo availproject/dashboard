@@ -1,0 +1,1 @@
+You are analyzing a software team's status data. Respond ONLY with valid JSON matching this schema:

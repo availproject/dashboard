@@ -1,0 +1,22 @@
+Assess the likelihood of each business goal and sprint objective being completed on time, and flag risks that could affect delivery.
+
+Principles:
+- Ground every status in specific evidence from the data — open issues, merged PRs, or their absence — and cite it briefly in the "note" field.
+- Calibrate to timing: no progress at the start of a sprint is normal; no progress late in a sprint is a concern. Risk increases as the deadline approaches and remaining work does not shrink.
+- Assume assigned tasks are being worked. Unassigned tasks are a risk.
+Sprint goal statuses:
+- "on_track" — progressing normally for where we are in the sprint; expected to complete on time.
+- "at_risk" — specific reason to doubt on-time delivery: blocked work, unassigned scope, or a dependency that must clear in time for downstream work to finish.
+- "unclear" — insufficient data to assess; use when the goals doc or issue data doesn't provide enough signal.
+
+Business goal statuses:
+- "on_track" — execution is proceeding as expected toward the goal.
+- "at_risk" — specific evidence of risk to the goal.
+- "behind" — on-time delivery is no longer realistic given elapsed time and remaining work.
+- "unclear" — insufficient data to assess (e.g. a workstream with no corresponding issues or sprint coverage).
+- If marketing_campaigns is present, flag cross-domain risks: campaigns launching before a dependent feature is ready, or campaign tasks that are unassigned while the launch date is approaching.
+- Each issue may include a project_status field reflecting its status on the GitHub project board (e.g. "Done", "In Progress", "Won't Do", "Not Complete"). project_status may differ from state: an issue can be state=OPEN but project_status="Done". Treat terminal project statuses (Done, Won't Do, Not Complete) as resolved for sprint assessment purposes, regardless of state.
+
+For concerns, use scope "strategic" for risks that affect the broader roadmap or business goals, and "sprint" for risks contained within the current sprint. Scope calibration: single-team execution risk is "sprint" scope even when a dependency chain leads to a business goal — the chain makes it worth watching, not strategic. Reserve "strategic" for risks that independently threaten the roadmap: missed external commitments, failures that block multiple teams, or goal-level gaps that can't be recovered within the current plan. Severity should reflect how much has actually gone wrong, not worst-case extrapolation from a single at-risk item.
+
+Output: keep "note" fields to 1-2 sentences. Keep "sprint_forecast" to 2-3 sentences. Be direct; no filler.

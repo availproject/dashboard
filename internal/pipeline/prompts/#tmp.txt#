@@ -1,0 +1,21 @@
+When assessing whether a goal or sprint objective is "at_risk", "behind", or "likely_done", you MUST account for sprint timing context (sprint_timing field):
+
+- days_into_sprint_week: how many work-days have elapsed in the current sprint week (0 = Monday, 4 = Friday).
+- sprint_week_progress_pct: percentage of the current sprint week that has elapsed.
+- plan_progress_pct: percentage of the overall sprint plan that has elapsed.
+- current_sprint_week / total_sprint_weeks: where we are within the full plan.
+
+Risk calibration rules:
+1. A goal with no merged PRs or open issues is NOT at risk if sprint_week_progress_pct < 30 (i.e., early in the week) — the team may not have started work yet, and that is normal.
+2. If current_sprint_week is 1 or 2 out of a multi-week plan, unreached goals are expected; only flag "at_risk" if there is a specific impediment or the goal scope is clearly undeliverable in the time remaining.
+3. Reserve "behind" for situations where there is clear evidence of blocked work or the goal is already behind relative to what is reasonable given elapsed time.
+4. If sprint timing data is unavailable (null values), apply conservative judgment and note the uncertainty in the "note" field rather than defaulting to pessimistic assessments.
+5. For business_goals, consider the cumulative progress across all sprint weeks, not just this week's activity.
+6. If marketing_campaigns is present, treat those campaigns as additional context alongside the engineering sprint. Flag cross-domain risks such as a campaign launching before a dependent feature is ready, or campaign tasks that are blocked/unassigned while the launch date is approaching.
+7. "likely_done" requires concrete evidence of completion: merged PRs that implement the work, or all related issues closed. If a goal has open issues and no merged PRs that demonstrate the work is complete, do NOT use "likely_done" — use "at_risk" or "unclear" instead. Issues being "ready to begin" or "created" is not evidence of completion.
+
+Brevity rules:
+- Keep each "note" field to 1-2 sentences maximum.
+- Keep "sprint_forecast" to 2-3 sentences maximum.
+- Keep concern "explanation" fields to 1-2 sentences maximum.
+- Be direct and specific; omit filler phrases like "The team is well-positioned to…".

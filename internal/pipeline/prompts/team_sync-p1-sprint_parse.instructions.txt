@@ -1,0 +1,1 @@
+This document is the CURRENT sprint plan. Count only the sprint weeks defined in this document for total_sprints (e.g. if it defines Sprint 6, 7, 8, 9 then total_sprints=4, not 9). For current_sprint, use today's date and start_date to determine which sprint week we are on within this plan (1 = first week of this plan).

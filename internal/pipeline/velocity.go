@@ -12,8 +12,6 @@ import (
 // VelocityPipeline is the pipeline name stored in ai_cache.
 const VelocityPipeline = "velocity"
 
-const velocitySchema = `{"sprints":[{"label":"string","score":0,"breakdown":{"issues":0,"prs":0,"commits":0}}]}`
-
 // VelocityResult is the structured output of the velocity pipeline.
 type VelocityResult struct {
 	Sprints []SprintVelocity `json:"sprints"`

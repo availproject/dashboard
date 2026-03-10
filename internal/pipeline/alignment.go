@@ -12,8 +12,6 @@ import (
 // AlignmentPipeline is the pipeline name stored in ai_cache.
 const AlignmentPipeline = "alignment"
 
-const alignmentSchema = `{"alignments":[{"team_id":0,"aligned":true,"notes":"string"}],"flags":["string"]}`
-
 // AlignmentResult is the structured output of the alignment pipeline.
 type AlignmentResult struct {
 	Alignments []TeamAlignment `json:"alignments"`
