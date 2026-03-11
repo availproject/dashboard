@@ -1,0 +1,51 @@
+Extract named releases, milestones, and deadlines from the provided documents and produce a unified calendar event list.
+
+## Sources
+
+You will receive some or all of:
+- `goals_doc_text`: the team's goals / GTM document — source of truth for planned releases and strategic milestones
+- `sprint_plan_text`: the current sprint plan — contains sprint-by-sprint work breakdown that implies delivery timing
+- `sprint_calendar`: structured array of `{sprint_num, start_date, end_date}` — use this to translate sprint references into concrete dates
+- `marketing_campaigns`: structured array of `{name, date_start, date_end}` — confirmed marketing commitments
+
+## What to extract
+
+Include:
+- Named releases (e.g. "private alpha", "v2 launch", "public beta", "GA")
+- Named milestones with clear business significance (e.g. "API freeze", "design handoff", "pilot program")
+- Hard deadlines explicitly mentioned in the documents
+
+Exclude:
+- Routine sprint tasks and individual issue-level work
+- Status updates or retrospective notes
+- Vague references without a named outcome (e.g. "we should ship something soon")
+
+## Canonicalization
+
+If the same release or milestone appears in multiple sources (e.g. "alpha" in the GTM doc, "alpha sprint" in the sprint plan, and an "alpha announcement" campaign in marketing), emit ONE event. Merge mentions from all sources into the `sources` array.
+
+Use a short, stable `event_key` slug (e.g. `private-alpha`, `v2-launch`, `api-freeze`). Titles should be concise and human-readable.
+
+## Date resolution
+
+For each event, determine the best available date:
+
+1. **confirmed** — an explicit calendar date appears in the source text or marketing data
+2. **inferred** — the text references a sprint number or relative timing (e.g. "end of sprint 3", "by week 4"); use `sprint_calendar` to compute the concrete date and set `date_confidence: "inferred"`
+3. **none** — no date information found in any source; set `needs_date: true`, omit `date`, set `date_confidence: "none"`
+
+When multiple sources provide dates for the same event, prefer confirmed over inferred, and use the marketing date as the anchor when it conflicts (it represents an external commitment).
+
+## Flags
+
+Emit flags on events where you detect planning concerns:
+
+- **date_mismatch**: a marketing campaign date precedes the sprint-implied readiness date for the same release. Include both dates in the message (e.g. "Marketing announces on 2026-03-15 but sprint plan implies readiness on 2026-03-27").
+- **missing_sprint_coverage**: a release or milestone appears in the goals/GTM doc but there is no corresponding sprint work visible in the sprint plan. This may indicate a planning gap.
+- **missing_date**: a release or milestone appears in the goals/GTM doc with no date in any source. Only emit this flag when the milestone appears significant (e.g. a named product release) — do not flag every undated note.
+
+A single event may have multiple flags. Keep messages concise (1–2 sentences).
+
+## Output
+
+Return only events for this team's product work. Do not invent events not supported by the source text. Omit fields that have no value (e.g. omit `date` and `end_date` if not applicable; omit `flags` if empty).

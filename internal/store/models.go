@@ -106,6 +106,23 @@ type SprintMeta struct {
 	UpdatedAt    time.Time
 }
 
+// CalendarEvent represents a row in the calendar_events table.
+type CalendarEvent struct {
+	ID             int64
+	TeamID         int64
+	EventKey       string
+	Title          string
+	EventType      string
+	SourceClass    string
+	Date           sql.NullString
+	DateConfidence string
+	EndDate        sql.NullString
+	Sources        sql.NullString // JSON
+	Flags          sql.NullString // JSON
+	NeedsDate      int
+	UpdatedAt      time.Time
+}
+
 // RefreshToken represents a row in the refresh_tokens table.
 type RefreshToken struct {
 	ID        int64

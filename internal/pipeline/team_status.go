@@ -116,4 +116,5 @@ type TeamStatusInput struct {
 	OpenIssues         any    `json:"open_issues"`
 	MergedPRs          any    `json:"merged_prs"`
 	MarketingCampaigns any    `json:"marketing_campaigns,omitempty"`
+	CalendarFlags      any    `json:"calendar_flags,omitempty"` // []CalendarEventFlag from dates_extract
 }

@@ -410,10 +410,11 @@ func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connecto
 }
 
 // FetchIssues fetches issues for a repo relevant to the given label.
-// It always returns all currently open issues with the label (full sprint board view)
-// plus all issues closed in the repo within the last 90 days regardless of label,
-// because closed issues often have their team label removed as part of the done workflow,
-// which would otherwise cause them to silently disappear from the AI's view.
+// It returns all currently open issues with the label (full sprint board view)
+// plus all recently closed issues with the label. The label filter is applied to
+// closed issues because autotag enforces label presence on closed project issues,
+// so a label-filtered closed search reliably captures completed work without
+// pulling in unrelated issues from shared repos.
 func (c *Client) FetchIssues(ctx context.Context, owner, repo, label string, since time.Time) ([]*gh.Issue, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
@@ -429,15 +430,15 @@ func (c *Client) FetchIssues(ctx context.Context, owner, repo, label string, sin
 		return nil, err
 	}
 
-	// 2. All recently closed issues in the repo — no label filter, because teams
-	// commonly remove the team label when closing an issue (e.g. marking Done on
-	// a project board strips the label), making label-filtered closed searches miss them.
+	// 2. Recently closed issues with this label. Autotag enforces the label on closed
+	// issues, so filtering by label is safe and avoids pulling in unrelated issues
+	// from shared repos (e.g. a roadmap repo used by multiple teams).
 	closedSince := time.Now().AddDate(0, 0, -90)
 	if since.Before(closedSince) {
 		closedSince = since
 	}
 	if err := c.searchIssues(ctx,
-		fmt.Sprintf("repo:%s/%s is:closed closed:>%s", owner, repo, closedSince.UTC().Format("2006-01-02")),
+		fmt.Sprintf("repo:%s/%s label:%q is:closed closed:>%s", owner, repo, label, closedSince.UTC().Format("2006-01-02")),
 		&all,
 	); err != nil {
 		return nil, err
@@ -931,7 +932,6 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 	var (
 		cursor         *string
 		totalItems     int
-		skippedClosed  int
 		alreadyLabeled int
 		noTeamArea     int
 		noLabel        int
@@ -966,12 +966,6 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 			}
 			if teamAreaValue == "" {
 				noTeamArea++
-				continue
-			}
-
-			// Skip closed issues — labels on closed issues don't affect FetchIssues results.
-			if strings.EqualFold(item.Content.State, "closed") {
-				skippedClosed++
 				continue
 			}
 
@@ -1030,11 +1024,11 @@ func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, 
 		cursor = &c2
 	}
 	if len(unmappedValues) > 0 {
-		log.Printf("autotag: %d items — %d labeled, %d already had label, %d closed skipped, %d no team/area, %d unmapped %v, %d errors",
-			totalItems, labeled, alreadyLabeled, skippedClosed, noTeamArea, noLabel, unmappedValues, labelErrors)
+		log.Printf("autotag: %d items — %d labeled, %d already had label, %d no team/area, %d unmapped %v, %d errors",
+			totalItems, labeled, alreadyLabeled, noTeamArea, noLabel, unmappedValues, labelErrors)
 	} else {
-		log.Printf("autotag: %d items — %d labeled, %d already had label, %d closed skipped, %d no team/area, %d errors",
-			totalItems, labeled, alreadyLabeled, skippedClosed, noTeamArea, labelErrors)
+		log.Printf("autotag: %d items — %d labeled, %d already had label, %d no team/area, %d errors",
+			totalItems, labeled, alreadyLabeled, noTeamArea, labelErrors)
 	}
 	return nil
 }

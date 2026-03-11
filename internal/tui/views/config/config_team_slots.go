@@ -40,7 +40,7 @@ var slotDisplayOrder = []string{
 
 var slotLabels = map[string]string{
 	"project_homepage":   "Project Homepage",
-	"goals_doc":          "Goals Doc",
+	"goals_doc":          "Goals / GTM Doc",
 	"sprint_doc":         "Sprint Plans",
 	"github_repo":        "GitHub Repos",
 	"github_project":     "Project Board",

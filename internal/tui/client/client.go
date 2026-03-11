@@ -423,6 +423,45 @@ type MarketingResponse struct {
 	LastSyncedAt *string                 `json:"last_synced_at"`
 }
 
+// OrgCalendarEvent is a single event in the org-level calendar, enriched with team info.
+type OrgCalendarEvent struct {
+	TeamID         int64  `json:"team_id"`
+	TeamName       string `json:"team_name"`
+	Date           string `json:"date,omitempty"`
+	EndDate        string `json:"end_date,omitempty"`
+	Title          string `json:"title"`
+	EventType      string `json:"event_type"`
+	DateConfidence string `json:"date_confidence"`
+	HasFlags       bool   `json:"has_flags"`
+	NeedsDate      bool   `json:"needs_date"`
+}
+
+// OrgCalendarResponse is returned by GetOrgCalendar.
+type OrgCalendarResponse struct {
+	Events  []OrgCalendarEvent `json:"events"`
+	Undated []OrgCalendarEvent `json:"undated"`
+}
+
+// CalendarEventItem is a single event in the calendar response.
+type CalendarEventItem struct {
+	EventKey       string `json:"event_key"`
+	Title          string `json:"title"`
+	EventType      string `json:"event_type"`
+	SourceClass    string `json:"source_class"`
+	Date           string `json:"date,omitempty"`
+	DateConfidence string `json:"date_confidence"`
+	EndDate        string `json:"end_date,omitempty"`
+	Sources        any    `json:"sources,omitempty"`
+	Flags          any    `json:"flags,omitempty"`
+	NeedsDate      bool   `json:"needs_date"`
+}
+
+// CalendarResponse is returned by GetCalendar.
+type CalendarResponse struct {
+	Events  []CalendarEventItem `json:"events"`
+	Undated []CalendarEventItem `json:"undated"`
+}
+
 // SyncRunResponse is returned by GetSyncRun.
 type SyncRunResponse struct {
 	ID     int64   `json:"ID"`
@@ -644,6 +683,42 @@ func (c *Client) GetMarketing(teamID int64) (*MarketingResponse, error) {
 		return nil, err
 	}
 	var result MarketingResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// GetOrgCalendar returns calendar events across all teams.
+// from and to are optional YYYY-MM-DD date range filters; when empty all events are returned.
+func (c *Client) GetOrgCalendar(from, to string) (*OrgCalendarResponse, error) {
+	u := c.serverAddr + "/org/calendar"
+	if from != "" && to != "" {
+		u += fmt.Sprintf("?from=%s&to=%s", from, to)
+	}
+	resp, err := c.doRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result OrgCalendarResponse
+	return &result, decodeJSON(resp, &result)
+}
+
+// GetCalendar returns the calendar events for a team.
+// from and to are optional YYYY-MM-DD date range filters.
+func (c *Client) GetCalendar(teamID int64, from, to string) (*CalendarResponse, error) {
+	url := fmt.Sprintf("%s/teams/%d/calendar", c.serverAddr, teamID)
+	if from != "" && to != "" {
+		url += fmt.Sprintf("?from=%s&to=%s", from, to)
+	}
+	resp, err := c.doRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result CalendarResponse
 	return &result, decodeJSON(resp, &result)
 }
 

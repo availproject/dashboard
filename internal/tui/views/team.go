@@ -56,6 +56,7 @@ type TeamReportView struct {
 	metrics   *client.MetricsResponse
 	activity  *client.ActivityResponse
 	marketing *client.MarketingResponse
+	calendar  *client.CalendarResponse
 
 	sprintLoading    bool
 	goalsLoading     bool
@@ -64,6 +65,7 @@ type TeamReportView struct {
 	metricsLoading   bool
 	activityLoading  bool
 	marketingLoading bool
+	calendarLoading  bool
 
 	sprintErr    string
 	goalsErr     string
@@ -72,6 +74,7 @@ type TeamReportView struct {
 	metricsErr   string
 	activityErr  string
 	marketingErr string
+	calendarErr  string
 
 	mode        teamViewMode
 	scrollY     int
@@ -100,6 +103,7 @@ func NewTeamView(c *client.Client, teamID int64, name string) *TeamReportView {
 		metricsLoading:   true,
 		activityLoading:  true,
 		marketingLoading: true,
+		calendarLoading:  true,
 		height:           40,
 	}
 }
@@ -111,6 +115,11 @@ type activityLoadedMsg struct {
 
 type marketingLoadedMsg struct {
 	data *client.MarketingResponse
+	err  error
+}
+
+type calendarLoadedMsg struct {
+	data *client.CalendarResponse
 	err  error
 }
 
@@ -144,6 +153,10 @@ func (v *TeamReportView) Init() tea.Cmd {
 		func() tea.Msg {
 			data, err := v.c.GetMarketing(v.teamID)
 			return marketingLoadedMsg{data: data, err: err}
+		},
+		func() tea.Msg {
+			data, err := v.c.GetCalendar(v.teamID, "", "")
+			return calendarLoadedMsg{data: data, err: err}
 		},
 	)
 }
@@ -206,6 +219,7 @@ func (v *TeamReportView) reload() tea.Cmd {
 	v.metricsLoading = true
 	v.activityLoading = true
 	v.marketingLoading = true
+	v.calendarLoading = true
 	return v.Init()
 }
 
@@ -284,6 +298,16 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			v.marketing = m.data
 			v.marketingErr = ""
+		}
+		return v, nil
+
+	case calendarLoadedMsg:
+		v.calendarLoading = false
+		if m.err != nil {
+			v.calendarErr = m.err.Error()
+		} else {
+			v.calendar = m.data
+			v.calendarErr = ""
 		}
 		return v, nil
 
@@ -661,6 +685,32 @@ func (v *TeamReportView) renderContent() string {
 
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
+	// ── Calendar ───────────────────────────────────────────────────────────
+	sb.WriteString("  " + sectionHeadingStyle.Render("Calendar") + "\n\n")
+	if v.calendarLoading {
+		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+	} else if v.calendarErr != "" {
+		sb.WriteString(errorStyle.Render("  Error: "+v.calendarErr) + "\n")
+	} else if v.calendar == nil || (len(v.calendar.Events) == 0 && len(v.calendar.Undated) == 0) {
+		sb.WriteString(dimStyle.Render("  No calendar data. Press r to sync.") + "\n")
+	} else {
+		if len(v.calendar.Events) > 0 {
+			for _, e := range v.calendar.Events {
+				sb.WriteString(v.renderCalendarEvent(e))
+			}
+		}
+		if len(v.calendar.Undated) > 0 {
+			sb.WriteString("\n  " + warningAmberStyle.Render("Needs Date") + "\n")
+			for _, e := range v.calendar.Undated {
+				label := warningAmberStyle.Render("[NEEDS DATE]")
+				typeStr := dimStyle.Render(calendarEventTypeLabel(e.EventType))
+				sb.WriteString(fmt.Sprintf("  %s  %s  %s\n", label, typeStr, e.Title))
+			}
+		}
+	}
+
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
 	// ── Sprint Status ─────────────────────────────────────────────────────
 	{
 		hasSprintGoals := v.goals != nil && len(v.goals.SprintGoals) > 0
@@ -779,72 +829,6 @@ func (v *TeamReportView) renderContent() string {
 
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
-	// ── Resource / Workload ───────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeadingStyle.Render("Resource / Workload") + "\n\n")
-	if v.workloadLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.workloadErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.workloadErr) + "\n")
-	} else if v.workload == nil || len(v.workload.Members) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		sb.WriteString(fmt.Sprintf("  %-24s  %-10s  %s\n", "Member", "Est. Days", "Load"))
-		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", 46)) + "\n")
-		for _, m := range v.workload.Members {
-			labelStyle := riskNormalStyle
-			switch strings.ToUpper(m.Label) {
-			case "HIGH":
-				labelStyle = riskHighStyle
-			case "LOW":
-				labelStyle = dimStyle
-			}
-			label := labelStyle.Render(fmt.Sprintf("[%s]", strings.ToUpper(m.Label)))
-			sb.WriteString(fmt.Sprintf("  %-24s  %-10s  %s\n", m.Name, fmt.Sprintf("%.1f days", m.EstimatedDays), label))
-		}
-	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
-
-	// ── Velocity ──────────────────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeadingStyle.Render("Velocity") + "\n\n")
-	if v.velocityLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.velocityErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.velocityErr) + "\n")
-	} else if v.velocity == nil || len(v.velocity.Sprints) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		sb.WriteString("  " + selectedStyle.Render(sparkline(v.velocity.Sprints)) + "\n\n")
-		sb.WriteString(fmt.Sprintf("  %-16s  %6s  %8s  %6s  %7s\n", "Sprint", "Score", "Issues", "PRs", "Commits"))
-		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", 52)) + "\n")
-		for _, sp := range v.velocity.Sprints {
-			sb.WriteString(fmt.Sprintf("  %-16s  %6.1f  %8.0f  %6.0f  %7.0f\n",
-				sp.Label, sp.Score, sp.Breakdown.Issues, sp.Breakdown.PRs, sp.Breakdown.Commits))
-		}
-	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
-
-	// ── Business Metrics ──────────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeadingStyle.Render("Business Metrics") + "\n\n")
-	if v.metricsLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.metricsErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.metricsErr) + "\n")
-	} else if v.metrics == nil || len(v.metrics.Panels) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		for _, p := range v.metrics.Panels {
-			value := dimStyle.Render("—")
-			if p.Value != nil {
-				value = *p.Value
-			}
-			sb.WriteString("  " + selectedStyle.Render(p.Title) + "  " + value + "\n")
-		}
-	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
-
 	// ── Engineering ───────────────────────────────────────────────────────
 	sb.WriteString("  " + sectionHeadingStyle.Render("Engineering") + "\n\n")
 	if v.activityLoading {
@@ -855,11 +839,21 @@ func (v *TeamReportView) renderContent() string {
 		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
 	} else {
 		a := v.activity
+		// Pre-filter issues: exclude terminal project statuses for current-sprint view.
+		var activeIssues []client.ActivityIssue
+		for _, iss := range a.OpenIssues {
+			switch iss.ProjectStatus {
+			case "Done", "Not Completed", "Not Complete", "Won't Do":
+				// skip
+			default:
+				activeIssues = append(activeIssues, iss)
+			}
+		}
 		// Summary line
 		sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
 			dimStyle.Render(fmt.Sprintf("%d commits", len(a.RecentCommits))),
 			dimStyle.Render(fmt.Sprintf("%d PRs merged", len(a.MergedPRs))),
-			dimStyle.Render(fmt.Sprintf("%d open issues", len(a.OpenIssues))),
+			dimStyle.Render(fmt.Sprintf("%d open issues", len(activeIssues))),
 		))
 		sb.WriteString("\n")
 
@@ -879,10 +873,10 @@ func (v *TeamReportView) renderContent() string {
 			sb.WriteString("\n")
 		}
 
-		// Open issues
-		if len(a.OpenIssues) > 0 {
-			sb.WriteString("  " + noteStyle.Render("Open Issues") + "\n")
-			for _, iss := range a.OpenIssues {
+		// Open issues (current sprint — exclude terminal statuses)
+		if len(activeIssues) > 0 {
+			sb.WriteString("  " + noteStyle.Render("Open Issues (Current sprint)") + "\n")
+			for _, iss := range activeIssues {
 				statusStr := ""
 				if iss.ProjectStatus != "" {
 					col := lipgloss.Color("245")
@@ -891,8 +885,6 @@ func (v *TeamReportView) renderContent() string {
 						col = lipgloss.Color("14")
 					case "In Review":
 						col = lipgloss.Color("12")
-					case "Done":
-						col = lipgloss.Color("10")
 					}
 					statusStr = lipgloss.NewStyle().Foreground(col).Render(fmt.Sprintf("%-12s", iss.ProjectStatus))
 				}
@@ -962,7 +954,140 @@ func (v *TeamReportView) renderContent() string {
 		}
 	}
 
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	// ── Velocity ──────────────────────────────────────────────────────────
+	sb.WriteString("  " + sectionHeadingStyle.Render("Velocity") + "\n\n")
+	if v.velocityLoading {
+		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+	} else if v.velocityErr != "" {
+		sb.WriteString(errorStyle.Render("  Error: "+v.velocityErr) + "\n")
+	} else if v.velocity == nil || len(v.velocity.Sprints) == 0 {
+		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
+	} else {
+		sb.WriteString("  " + selectedStyle.Render(sparkline(v.velocity.Sprints)) + "\n\n")
+		sb.WriteString(fmt.Sprintf("  %-16s  %6s  %8s  %6s  %7s\n", "Sprint", "Score", "Issues", "PRs", "Commits"))
+		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", 52)) + "\n")
+		for _, sp := range v.velocity.Sprints {
+			sb.WriteString(fmt.Sprintf("  %-16s  %6.1f  %8.0f  %6.0f  %7.0f\n",
+				sp.Label, sp.Score, sp.Breakdown.Issues, sp.Breakdown.PRs, sp.Breakdown.Commits))
+		}
+	}
+
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	// ── Resource / Workload ───────────────────────────────────────────────
+	sb.WriteString("  " + sectionHeadingStyle.Render("Resource / Workload") + "\n\n")
+	if v.workloadLoading {
+		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+	} else if v.workloadErr != "" {
+		sb.WriteString(errorStyle.Render("  Error: "+v.workloadErr) + "\n")
+	} else if v.workload == nil || len(v.workload.Members) == 0 {
+		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("  %-24s  %-10s  %s\n", "Member", "Est. Days", "Load"))
+		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", 46)) + "\n")
+		for _, m := range v.workload.Members {
+			labelStyle := riskNormalStyle
+			switch strings.ToUpper(m.Label) {
+			case "HIGH":
+				labelStyle = riskHighStyle
+			case "LOW":
+				labelStyle = dimStyle
+			}
+			label := labelStyle.Render(fmt.Sprintf("[%s]", strings.ToUpper(m.Label)))
+			sb.WriteString(fmt.Sprintf("  %-24s  %-10s  %s\n", m.Name, fmt.Sprintf("%.1f days", m.EstimatedDays), label))
+		}
+	}
+
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	// ── Business Metrics ──────────────────────────────────────────────────
+	sb.WriteString("  " + sectionHeadingStyle.Render("Business Metrics") + "\n\n")
+	if v.metricsLoading {
+		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+	} else if v.metricsErr != "" {
+		sb.WriteString(errorStyle.Render("  Error: "+v.metricsErr) + "\n")
+	} else if v.metrics == nil || len(v.metrics.Panels) == 0 {
+		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
+	} else {
+		for _, p := range v.metrics.Panels {
+			value := dimStyle.Render("—")
+			if p.Value != nil {
+				value = *p.Value
+			}
+			sb.WriteString("  " + selectedStyle.Render(p.Title) + "  " + value + "\n")
+		}
+	}
+
 	sb.WriteString("\n")
 	v.cursorLines = newCursorLines
 	return sb.String()
+}
+
+// renderCalendarEvent renders a single dated calendar event row.
+func (v *TeamReportView) renderCalendarEvent(e client.CalendarEventItem) string {
+	// Date column (always present for dated events)
+	dateStr := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fmt.Sprintf("%-12s", e.Date))
+
+	// Type label
+	typeStr := dimStyle.Render(fmt.Sprintf("%-12s", calendarEventTypeLabel(e.EventType)))
+
+	// Confidence indicator for inferred dates
+	confStr := ""
+	if e.DateConfidence == "inferred" {
+		confStr = dimStyle.Render("~")
+	} else {
+		confStr = " "
+	}
+
+	// Flag indicator
+	flagStr := ""
+	if hasCalendarFlags(e) {
+		flagStr = " " + warningAmberStyle.Render("⚠")
+	}
+
+	// Style title by event type
+	var titleStr string
+	switch e.EventType {
+	case "release":
+		titleStr = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true).Render(e.Title)
+	case "sprint_start", "sprint_end":
+		titleStr = dimStyle.Render(e.Title)
+	default:
+		titleStr = e.Title
+	}
+
+	return fmt.Sprintf("  %s%s  %s  %s%s\n", confStr, dateStr, typeStr, titleStr, flagStr)
+}
+
+// calendarEventTypeLabel returns a short display label for an event_type.
+func calendarEventTypeLabel(t string) string {
+	switch t {
+	case "release":
+		return "Release"
+	case "milestone":
+		return "Milestone"
+	case "deadline":
+		return "Deadline"
+	case "sprint_start":
+		return "Sprint start"
+	case "sprint_end":
+		return "Sprint end"
+	case "campaign_start":
+		return "Campaign"
+	case "campaign_end":
+		return "Campaign end"
+	default:
+		return t
+	}
+}
+
+// hasCalendarFlags returns true if the event has any flags embedded in its Flags field.
+func hasCalendarFlags(e client.CalendarEventItem) bool {
+	if e.Flags == nil {
+		return false
+	}
+	flags, ok := e.Flags.([]any)
+	return ok && len(flags) > 0
 }

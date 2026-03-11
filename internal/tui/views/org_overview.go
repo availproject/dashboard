@@ -31,18 +31,34 @@ type orgSyncDoneMsg struct {
 	errMsg string
 }
 
+type orgCalendarLoadedMsg struct {
+	data *client.OrgCalendarResponse
+	err  error
+}
+
 // ---- styles ----
 
 var (
-	riskHighStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	riskMediumStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
-	riskLowStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	riskNormalStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	selectedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	dimStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	syncBannerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	riskHighStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	riskMediumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+	riskLowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	riskNormalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	selectedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	dimStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	syncBannerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	errorStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
+
+// calendarViewMode controls calendar display format.
+type calendarViewMode int
+
+const (
+	calendarModeList calendarViewMode = iota
+	calendarModeGrid
+)
+
+// calPalette maps team index → terminal color for calendar indicators.
+var calPalette = []lipgloss.Color{"14", "11", "13", "10", "9", "6"}
 
 // OrgOverviewView shows all teams at a glance.
 type OrgOverviewView struct {
@@ -53,22 +69,43 @@ type OrgOverviewView struct {
 	errMsg  string
 	syncing bool
 	syncMsg string
+
+	// calendar
+	calendar        *client.OrgCalendarResponse
+	calendarLoading bool
+	calendarErr     string
+	calendarMode    calendarViewMode
+	calendarMonth   time.Time // first day of the displayed month (grid mode)
 }
 
 // NewOrgOverviewView creates the org overview view.
 func NewOrgOverviewView(c *client.Client) *OrgOverviewView {
-	return &OrgOverviewView{c: c, loading: true}
+	now := time.Now()
+	return &OrgOverviewView{
+		c:               c,
+		loading:         true,
+		calendarLoading: true,
+		calendarMode:    calendarModeGrid,
+		calendarMonth:   time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local),
+	}
 }
 
-// Init implements tea.Model — load org data immediately.
+// Init implements tea.Model — load org data and calendar in parallel.
 func (v *OrgOverviewView) Init() tea.Cmd {
-	return v.loadData()
+	return tea.Batch(v.loadData(), v.loadCalendar())
 }
 
 func (v *OrgOverviewView) loadData() tea.Cmd {
 	return func() tea.Msg {
 		data, err := v.c.GetOrgOverview()
 		return orgLoadedMsg{data: data, err: err}
+	}
+}
+
+func (v *OrgOverviewView) loadCalendar() tea.Cmd {
+	return func() tea.Msg {
+		data, err := v.c.GetOrgCalendar("", "") // fetch all events
+		return orgCalendarLoadedMsg{data: data, err: err}
 	}
 }
 
@@ -110,6 +147,16 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return v, nil
 
+	case orgCalendarLoadedMsg:
+		v.calendarLoading = false
+		if m.err != nil {
+			v.calendarErr = m.err.Error()
+		} else {
+			v.calendar = m.data
+			v.calendarErr = ""
+		}
+		return v, nil
+
 	case tea.KeyMsg:
 		switch m.String() {
 		case "j", "down":
@@ -141,6 +188,24 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return v, doOrgSync(v.c)
 			}
 			return v, nil
+		case "v":
+			// Toggle calendar view mode.
+			if v.calendarMode == calendarModeList {
+				v.calendarMode = calendarModeGrid
+			} else {
+				v.calendarMode = calendarModeList
+			}
+			return v, nil
+		case "[":
+			if v.calendarMode == calendarModeGrid {
+				v.calendarMonth = v.calendarMonth.AddDate(0, -1, 0)
+			}
+			return v, nil
+		case "]":
+			if v.calendarMode == calendarModeGrid {
+				v.calendarMonth = v.calendarMonth.AddDate(0, 1, 0)
+			}
+			return v, nil
 		}
 
 	case orgSyncStartedMsg:
@@ -161,9 +226,10 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			v.syncMsg = ""
 		}
-		// Reload data after sync.
+		// Reload both data and calendar after sync.
 		v.loading = true
-		return v, v.loadData()
+		v.calendarLoading = true
+		return v, tea.Batch(v.loadData(), v.loadCalendar())
 	}
 
 	return v, nil
@@ -174,9 +240,7 @@ func (v *OrgOverviewView) View() string {
 	var sb strings.Builder
 
 	// Sync banner
-	if v.syncing && v.syncMsg != "" {
-		sb.WriteString(syncBannerStyle.Render("  "+v.syncMsg) + "\n\n")
-	} else if v.syncMsg != "" {
+	if v.syncMsg != "" {
 		sb.WriteString(syncBannerStyle.Render("  "+v.syncMsg) + "\n\n")
 	}
 
@@ -194,7 +258,7 @@ func (v *OrgOverviewView) View() string {
 
 	// No data
 	if v.data == nil || len(v.data.Teams) == 0 {
-		sb.WriteString("  No data yet. Press r to sync this team (or R for full org).\n")
+		sb.WriteString("  No data yet. Press R to sync.\n")
 		sb.WriteString(v.footer())
 		return sb.String()
 	}
@@ -221,7 +285,7 @@ func (v *OrgOverviewView) View() string {
 		sb.WriteString(line + "\n")
 	}
 
-	// Org metrics summary
+	// Org workload summary
 	if len(v.data.Workload) > 0 {
 		sb.WriteString("\n")
 		sb.WriteString(dimStyle.Render("  Org Workload:"))
@@ -232,16 +296,302 @@ func (v *OrgOverviewView) View() string {
 		sb.WriteString("  " + strings.Join(parts, "   ") + "\n")
 	}
 
+	// ── Calendar ──────────────────────────────────────────────────────────
+	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
+
+	modeLabel := "v grid"
+	if v.calendarMode == calendarModeGrid {
+		modeLabel = "v list"
+	}
+	sb.WriteString("  " + sectionHeadingStyle.Render("Calendar") +
+		"  " + dimStyle.Render(modeLabel) + "\n\n")
+
+	if v.calendarMode == calendarModeGrid {
+		sb.WriteString(v.renderCalendarGrid())
+	} else {
+		sb.WriteString(v.renderCalendarList())
+	}
+
 	sb.WriteString(v.footer())
 	return sb.String()
 }
+
+// ── Calendar rendering ────────────────────────────────────────────────────────
+
+// teamCalendarInfo returns the display color and single-letter initial for a team ID.
+// Colors cycle through calPalette in team list order.
+func (v *OrgOverviewView) teamCalendarInfo(teamID int64) (color lipgloss.Color, initial string) {
+	if v.data != nil {
+		for i, t := range v.data.Teams {
+			if t.ID == teamID {
+				col := calPalette[i%len(calPalette)]
+				ini := "?"
+				if t.Name != "" {
+					ini = strings.ToUpper(t.Name[:1])
+				}
+				return col, ini
+			}
+		}
+	}
+	return "7", "?"
+}
+
+// renderCalendarList renders upcoming events as a chronological list.
+func (v *OrgOverviewView) renderCalendarList() string {
+	var sb strings.Builder
+
+	if v.calendarLoading {
+		return dimStyle.Render("  Loading…") + "\n"
+	}
+	if v.calendarErr != "" {
+		return errorStyle.Render("  Error: "+v.calendarErr) + "\n"
+	}
+	if v.calendar == nil || (len(v.calendar.Events) == 0 && len(v.calendar.Undated) == 0) {
+		return dimStyle.Render("  No calendar data. Press R to sync.") + "\n"
+	}
+
+	todayStr := time.Now().Format("2006-01-02")
+	count := 0
+	for _, e := range v.calendar.Events {
+		if e.Date < todayStr {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", e.Date)
+		if err != nil {
+			continue
+		}
+		dateStr := t.Format("Jan 02")
+		color, _ := v.teamCalendarInfo(e.TeamID)
+		teamTag := lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("%-14s", e.TeamName))
+
+		confStr := " "
+		if e.DateConfidence == "inferred" {
+			confStr = dimStyle.Render("~")
+		}
+		flagStr := ""
+		if e.HasFlags {
+			flagStr = "  " + warningAmberStyle.Render("⚠")
+		}
+		sb.WriteString(fmt.Sprintf("  %s%s  %s  %s%s\n",
+			confStr, dimStyle.Render(dateStr), teamTag, e.Title, flagStr))
+		count++
+	}
+
+	if count == 0 {
+		sb.WriteString(dimStyle.Render("  No upcoming events.") + "\n")
+	}
+
+	if len(v.calendar.Undated) > 0 {
+		sb.WriteString("\n  " + warningAmberStyle.Render("Needs Date") + "\n")
+		for _, e := range v.calendar.Undated {
+			color, _ := v.teamCalendarInfo(e.TeamID)
+			teamTag := lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("%-14s", e.TeamName))
+			sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
+				warningAmberStyle.Render("[NEEDS DATE]"), teamTag, e.Title))
+		}
+	}
+
+	return sb.String()
+}
+
+// renderCalendarGrid renders two consecutive months side by side, then an event list below.
+func (v *OrgOverviewView) renderCalendarGrid() string {
+	if v.calendarLoading {
+		return dimStyle.Render("  Loading…") + "\n"
+	}
+	if v.calendarErr != "" {
+		return errorStyle.Render("  Error: "+v.calendarErr) + "\n"
+	}
+
+	month1 := v.calendarMonth
+	month2 := v.calendarMonth.AddDate(0, 1, 0)
+
+	// Title line: ◀ Month1 Year    Month2 Year ▶   [ ] months
+	name1 := "◀ " + month1.Format("January 2006")
+	name2 := month2.Format("January 2006") + " ▶"
+	const colWidth = 28
+	const gap = "    "
+	padTitle := colWidth + len(gap) - lipgloss.Width(name1)
+	if padTitle < 1 {
+		padTitle = 1
+	}
+
+	var sb strings.Builder
+	sb.WriteString("  " +
+		selectedStyle.Render(name1) +
+		strings.Repeat(" ", padTitle) +
+		selectedStyle.Render(name2) +
+		"  " + dimStyle.Render("[ ] months") + "\n\n")
+
+	// Grid lines for each month (each line is colWidth visible chars)
+	lines1 := v.monthGridLines(month1)
+	lines2 := v.monthGridLines(month2)
+
+	maxLines := len(lines1)
+	if len(lines2) > maxLines {
+		maxLines = len(lines2)
+	}
+	for len(lines1) < maxLines {
+		lines1 = append(lines1, "")
+	}
+	for len(lines2) < maxLines {
+		lines2 = append(lines2, "")
+	}
+
+	for i := range lines1 {
+		l1, l2 := lines1[i], lines2[i]
+		pad := colWidth - lipgloss.Width(l1)
+		if pad < 0 {
+			pad = 0
+		}
+		sb.WriteString("  " + l1 + strings.Repeat(" ", pad) + gap + l2 + "\n")
+	}
+
+	// Team legend
+	if v.data != nil && len(v.data.Teams) > 0 {
+		sb.WriteString("\n  ")
+		for i, t := range v.data.Teams {
+			color, initial := v.teamCalendarInfo(t.ID)
+			entry := lipgloss.NewStyle().Foreground(color).Render(initial + " " + t.Name)
+			if i > 0 {
+				sb.WriteString("   ")
+			}
+			sb.WriteString(entry)
+		}
+		sb.WriteString("\n")
+	}
+
+	// Events for both displayed months combined
+	periodStart := month1.Format("2006-01-02")
+	periodEnd := month2.AddDate(0, 1, -1).Format("2006-01-02")
+	var events []client.OrgCalendarEvent
+	if v.calendar != nil {
+		for _, e := range v.calendar.Events {
+			if e.Date >= periodStart && e.Date <= periodEnd {
+				events = append(events, e)
+			}
+		}
+	}
+	if len(events) > 0 {
+		sb.WriteString("\n")
+		for _, e := range events {
+			t, _ := time.Parse("2006-01-02", e.Date)
+			dateStr := t.Format("Jan 02")
+			color, _ := v.teamCalendarInfo(e.TeamID)
+			teamStr := lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("%-14s", e.TeamName))
+			confStr := " "
+			if e.DateConfidence == "inferred" {
+				confStr = dimStyle.Render("~")
+			}
+			flagStr := ""
+			if e.HasFlags {
+				flagStr = "  " + warningAmberStyle.Render("⚠")
+			}
+			sb.WriteString(fmt.Sprintf("  %s%s  %s  %s%s\n",
+				confStr, dimStyle.Render(dateStr), teamStr, e.Title, flagStr))
+		}
+	} else if v.calendar != nil {
+		sb.WriteString(dimStyle.Render("  No events in this period.") + "\n")
+	}
+
+	return sb.String()
+}
+
+// monthGridLines returns the day-of-week header row followed by week rows for a single month.
+// Each string has exactly colWidth (28) visible characters: 7 cells × 4 chars each.
+func (v *OrgOverviewView) monthGridLines(month time.Time) []string {
+	// Header: " Mo  Tu  We  Th  Fr  Sa  Su " — each slot is 4 visible chars.
+	lines := []string{dimStyle.Render(" Mo  Tu  We  Th  Fr  Sa  Su ")}
+
+	monthStart := month.Format("2006-01-02")
+	monthEnd := month.AddDate(0, 1, -1).Format("2006-01-02")
+	dayEvents := map[int][]client.OrgCalendarEvent{}
+	if v.calendar != nil {
+		for _, e := range v.calendar.Events {
+			if e.Date >= monthStart && e.Date <= monthEnd {
+				if t, err := time.Parse("2006-01-02", e.Date); err == nil {
+					dayEvents[t.Day()] = append(dayEvents[t.Day()], e)
+				}
+			}
+		}
+	}
+
+	daysInMonth := month.AddDate(0, 1, -1).Day()
+	startOffset := calMondayFirst(month.Weekday())
+	now := time.Now()
+	isCurrentMonth := month.Year() == now.Year() && month.Month() == now.Month()
+
+	totalCells := startOffset + daysInMonth
+	if totalCells%7 != 0 {
+		totalCells += 7 - totalCells%7
+	}
+
+	for row := 0; row < totalCells/7; row++ {
+		var lb strings.Builder
+		for col := 0; col < 7; col++ {
+			day := row*7 + col - startOffset + 1
+			if day < 1 || day > daysInMonth {
+				lb.WriteString("    ")
+			} else {
+				lb.WriteString(v.renderGridCell(day, dayEvents[day], isCurrentMonth && day == now.Day()))
+			}
+		}
+		lines = append(lines, lb.String())
+	}
+	return lines
+}
+
+// renderGridCell returns the 4-char string for a single day cell in the grid.
+// Format: " DD" (right-aligned 2-digit day, space-padded) + indicator (1 char).
+// indicator is a colored team initial, "+" for multiple teams, or " " for none.
+func (v *OrgOverviewView) renderGridCell(day int, events []client.OrgCalendarEvent, isToday bool) string {
+	indicator := " "
+	if len(events) > 0 {
+		// Count distinct teams
+		seen := map[int64]bool{}
+		for _, e := range events {
+			seen[e.TeamID] = true
+		}
+		if len(seen) == 1 {
+			color, initial := v.teamCalendarInfo(events[0].TeamID)
+			indicator = lipgloss.NewStyle().Foreground(color).Render(initial)
+		} else {
+			indicator = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render("+")
+		}
+	}
+
+	dayStr := fmt.Sprintf("%2d", day)
+	if isToday {
+		dayStr = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Render(fmt.Sprintf("%2d", day))
+	}
+
+	return " " + dayStr + indicator
+}
+
+// calMondayFirst converts time.Weekday to a Monday-first index (Mon=0, Sun=6).
+func calMondayFirst(wd time.Weekday) int {
+	if wd == time.Sunday {
+		return 6
+	}
+	return int(wd) - 1
+}
+
+// ── Footer / helpers ──────────────────────────────────────────────────────────
 
 func (v *OrgOverviewView) footer() string {
 	lastSync := "Never synced"
 	if v.data != nil && v.data.LastSyncedAt != nil {
 		lastSync = "Last synced: " + *v.data.LastSyncedAt
 	}
-	return "\n" + dimStyle.Render("  "+lastSync+"  ·  j/k navigate  ·  Enter to drill in  ·  R to sync org  ·  c config  ·  q to quit") + "\n"
+	calHint := "v grid"
+	if v.calendarMode == calendarModeGrid {
+		calHint = "[ ] months · v list"
+	}
+	return "\n" + dimStyle.Render(
+		"  "+lastSync+
+			"  ·  j/k navigate  ·  Enter drill in  ·  R sync org  ·  "+calHint+
+			"  ·  c config  ·  q quit",
+	) + "\n"
 }
 
 func renderRisk(level string) string {

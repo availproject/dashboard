@@ -538,10 +538,12 @@ func (e *Engine) fetchNotionContent(ctx context.Context, item *store.SourceCatal
 	}
 }
 
-// runTeamPipelines executes the pipeline chain for a team in two parallel phases:
+// runTeamPipelines executes the pipeline chain for a team in two parallel phases
+// with a calendar step between them:
 //
 //	Phase 1 (parallel): sprint_parse, velocity_analysis
-//	Phase 2 (parallel, after phase 1): team_status, workload_estimation
+//	Calendar step (sequential): structural calendar writer, dates_extract
+//	Phase 2 (parallel, after calendar step): team_status, workload_estimation
 //
 // Returns the extracted business goal texts for use in org-level goal_alignment.
 func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSyncData, errs map[string]string) []string {
@@ -555,12 +557,18 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 	log.Printf("INFO  sync [team %d]: pipeline phase 1 start (sprint_parse, velocity)", teamID)
 	var phase1 sync.WaitGroup
 
+	var sprintParseResult *pipeline.SprintParseResult
 	if td.currentPlanText != "" {
 		phase1.Add(1)
 		go func() {
 			defer phase1.Done()
 			t0 := time.Now()
-			_, _ = e.pipeline.RunSprintParse(ctx, teamID, td.currentPlanText)
+			res, err := e.pipeline.RunSprintParse(ctx, teamID, td.currentPlanText)
+			if err == nil {
+				mu.Lock()
+				sprintParseResult = res
+				mu.Unlock()
+			}
 			log.Printf("INFO  sync [team %d]: sprint_parse done in %s", teamID, time.Since(t0).Round(time.Millisecond))
 		}()
 	}
@@ -591,10 +599,50 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 	phase1.Wait()
 	log.Printf("INFO  sync [team %d]: pipeline phase 1 done in %s", teamID, time.Since(p1Start).Round(time.Millisecond))
 
-	// Phase 2: pipelines that depend on phase 1 results.
+	// Calendar step: write structural events and run dates_extract.
+	// Runs sequentially after phase 1 (needs sprint_meta from sprint_parse) and
+	// before phase 2 (team_status needs the resulting calendar flags).
+	sprintMeta, _ := e.store.GetSprintMeta(ctx, teamID, "current")
+	var calendarFlags []pipeline.CalendarEventFlag
+
+	if err := e.writeStructuralCalendarEvents(ctx, teamID, td.marketingCampaigns); err != nil {
+		log.Printf("WARN  sync [team %d]: structural calendar write: %v", teamID, err)
+	}
+
+	if td.currentPlanText != "" || td.goalsDocText != "" {
+		totalSprints := 4
+		if sprintParseResult != nil && sprintParseResult.TotalSprints > 0 {
+			totalSprints = sprintParseResult.TotalSprints
+		}
+		sprintCal := buildSprintCalendar(sprintMeta, totalSprints)
+		mktCampaigns := calendarCampaignsFromMarketing(td.marketingCampaigns)
+
+		t0 := time.Now()
+		datesResult, err := e.pipeline.RunDatesExtract(ctx, teamID, pipeline.DatesExtractInput{
+			GoalsDocText:       td.goalsDocText,
+			SprintPlanText:     td.currentPlanText,
+			SprintCalendar:     sprintCal,
+			MarketingCampaigns: mktCampaigns,
+			Today:              time.Now().Format("2006-01-02"),
+		})
+		if err != nil {
+			log.Printf("WARN  sync [team %d]: dates_extract: %v", teamID, err)
+		} else {
+			log.Printf("INFO  sync [team %d]: dates_extract done in %s (%d event(s))", teamID, time.Since(t0).Round(time.Millisecond), len(datesResult.Events))
+			synthesized := calendarEventsFromResult(datesResult)
+			if err := e.store.ReplaceCalendarEvents(ctx, teamID, "synthesized", synthesized); err != nil {
+				log.Printf("WARN  sync [team %d]: replace synthesized calendar events: %v", teamID, err)
+			}
+			// Collect all flags across events for team_status.
+			for _, ev := range datesResult.Events {
+				calendarFlags = append(calendarFlags, ev.Flags...)
+			}
+		}
+	}
+
+	// Phase 2: pipelines that depend on phase 1 + calendar results.
 	p2Start := time.Now()
 	log.Printf("INFO  sync [team %d]: pipeline phase 2 start (team_status, workload)", teamID)
-	sprintMeta, _ := e.store.GetSprintMeta(ctx, teamID, "current")
 	members, _ := e.store.GetTeamMembers(ctx, teamID)
 
 	var phase2 sync.WaitGroup
@@ -604,6 +652,10 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 		go func() {
 			defer phase2.Done()
 			t0 := time.Now()
+			var flagsInput any
+			if len(calendarFlags) > 0 {
+				flagsInput = calendarFlags
+			}
 			result, err := e.pipeline.RunTeamStatus(ctx, teamID, pipeline.TeamStatusInput{
 				GoalsDocText:       td.goalsDocText,
 				SprintPlanText:     td.currentPlanText,
@@ -611,6 +663,7 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 				OpenIssues:         issuesToAny(td.issues, td.projectStatuses),
 				MergedPRs:          prsToAny(td.mergedPRs),
 				MarketingCampaigns: marketingCampaignsToAny(td.marketingCampaigns),
+				CalendarFlags:      flagsInput,
 			})
 			if err != nil {
 				log.Printf("ERROR sync [team %d]: team_status: %v", teamID, err)
@@ -815,6 +868,66 @@ func marketingCampaignsToAny(campaigns []notionconn.MarketingCampaign) any {
 		result[i] = entry
 	}
 	return result
+}
+
+// calendarCampaignsFromMarketing converts []notionconn.MarketingCampaign to
+// []pipeline.CalendarCampaign for use as structured input to dates_extract.
+func calendarCampaignsFromMarketing(campaigns []notionconn.MarketingCampaign) []pipeline.CalendarCampaign {
+	if len(campaigns) == 0 {
+		return nil
+	}
+	out := make([]pipeline.CalendarCampaign, len(campaigns))
+	for i, c := range campaigns {
+		cc := pipeline.CalendarCampaign{Name: c.Title}
+		if c.DateStart != nil {
+			s := c.DateStart.Format("2006-01-02")
+			cc.DateStart = &s
+		}
+		if c.DateEnd != nil {
+			e := c.DateEnd.Format("2006-01-02")
+			cc.DateEnd = &e
+		}
+		out[i] = cc
+	}
+	return out
+}
+
+// calendarEventsFromResult converts a DatesExtractResult into []store.CalendarEvent
+// ready for ReplaceCalendarEvents with source_class='synthesized'.
+func calendarEventsFromResult(r *pipeline.DatesExtractResult) []store.CalendarEvent {
+	if r == nil {
+		return nil
+	}
+	events := make([]store.CalendarEvent, 0, len(r.Events))
+	for _, e := range r.Events {
+		ev := store.CalendarEvent{
+			EventKey:       e.EventKey,
+			Title:          e.Title,
+			EventType:      e.EventType,
+			DateConfidence: e.DateConfidence,
+		}
+		if e.Date != nil {
+			ev.Date = sql.NullString{String: *e.Date, Valid: true}
+		}
+		if e.EndDate != nil {
+			ev.EndDate = sql.NullString{String: *e.EndDate, Valid: true}
+		}
+		if e.NeedsDate {
+			ev.NeedsDate = 1
+		}
+		if len(e.Sources) > 0 {
+			if b, err := json.Marshal(e.Sources); err == nil {
+				ev.Sources = sql.NullString{String: string(b), Valid: true}
+			}
+		}
+		if len(e.Flags) > 0 {
+			if b, err := json.Marshal(e.Flags); err == nil {
+				ev.Flags = sql.NullString{String: string(b), Valid: true}
+			}
+		}
+		events = append(events, ev)
+	}
+	return events
 }
 
 // firstLine returns the first line of a multiline string.

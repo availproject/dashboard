@@ -186,6 +186,9 @@ func (r *Runner) RunTeamStatus(ctx context.Context, teamID int64, input TeamStat
 	if input.MarketingCampaigns != nil {
 		inputs["marketing_campaigns"] = input.MarketingCampaigns
 	}
+	if input.CalendarFlags != nil {
+		inputs["calendar_flags"] = input.CalendarFlags
+	}
 
 	var result TeamStatusResult
 	if err := r.generate(ctx, TeamStatusPipeline, teamStatusSchema, &teamID,

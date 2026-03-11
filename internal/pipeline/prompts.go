@@ -44,6 +44,12 @@ var homepageExtractInstructions string
 //go:embed prompts/team_sync-p1-sprint_parse.instructions.txt
 var sprintParseInstructions string
 
+//go:embed prompts/team_sync-p3-dates_extract.schema.json
+var datesExtractSchema string
+
+//go:embed prompts/team_sync-p3-dates_extract.instructions.txt
+var datesExtractInstructions string
+
 // Shared context blocks included across multiple pipelines.
 
 //go:embed prompts/sprint-conventions.md

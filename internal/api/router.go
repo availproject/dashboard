@@ -49,6 +49,7 @@ func NewRouter(deps *Deps) http.Handler {
 
 		// Read-only endpoints (view role sufficient)
 		r.Get("/org/overview", deps.handleOrgOverview)
+		r.Get("/org/calendar", deps.handleGetOrgCalendar)
 		r.Get("/teams", deps.handleListTeams)
 		r.Get("/teams/{id}/sprint", deps.handleTeamSprint)
 		r.Get("/teams/{id}/goals", deps.handleTeamGoals)
@@ -57,6 +58,7 @@ func NewRouter(deps *Deps) http.Handler {
 		r.Get("/teams/{id}/metrics", deps.handleTeamMetrics)
 		r.Get("/teams/{id}/activity", deps.handleGetTeamActivity)
 		r.Get("/teams/{id}/marketing", deps.handleGetTeamMarketing)
+		r.Get("/teams/{id}/calendar", deps.handleGetTeamCalendar)
 		r.Get("/teams/{id}/config", deps.handleGetTeamConfig)
 		r.Get("/teams/{id}/marketing-labels", deps.handleGetMarketingLabels)
 		r.Get("/sync/{run_id}", deps.handleGetSyncRun)
