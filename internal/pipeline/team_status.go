@@ -29,23 +29,26 @@ func sprintTimingContext(meta any, today time.Time) map[string]any {
 		}
 	}
 
-	// Total calendar days since plan start (clamp to 0 if plan hasn't started yet).
-	daysElapsed := today.Sub(start).Hours() / 24
-	if daysElapsed < 0 {
-		daysElapsed = 0
+	// Calendar days since plan start (0 = start day, clamp to 0 if future).
+	calDays := today.Sub(start).Hours() / 24
+	if calDays < 0 {
+		calDays = 0
 	}
 
-	// Current sprint week within the plan (1-based).
-	currentWeek := int(daysElapsed/7) + 1
+	// 1-based day number within the plan (start day = Day 1).
+	daysElapsed := int(calDays) + 1
 
-	// Day within the current sprint week, treating weekend days as end-of-week (4).
-	daysIntoWeek := int(daysElapsed) % 7
-	if daysIntoWeek > 4 {
-		daysIntoWeek = 4
+	// Current sprint week within the plan (1-based).
+	currentWeek := int(calDays/7) + 1
+
+	// Day within the current sprint week (1-based, Mon=1 … Fri=5), clamped for weekends.
+	daysIntoWeek := int(calDays)%7 + 1
+	if daysIntoWeek > 5 {
+		daysIntoWeek = 5
 	}
 
 	// Percentage of the current sprint week elapsed (0–100).
-	weekProgressPct := (daysIntoWeek * 100) / 4
+	weekProgressPct := (daysIntoWeek * 100) / 5
 
 	// Total sprint weeks from sprint_meta (SprintNumber holds current; we don't
 	// have total here, so expose what we have and let the model read total from

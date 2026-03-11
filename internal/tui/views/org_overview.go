@@ -285,17 +285,6 @@ func (v *OrgOverviewView) View() string {
 		sb.WriteString(line + "\n")
 	}
 
-	// Org workload summary
-	if len(v.data.Workload) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(dimStyle.Render("  Org Workload:"))
-		parts := make([]string, 0, len(v.data.Workload))
-		for _, w := range v.data.Workload {
-			parts = append(parts, fmt.Sprintf("%s %.1fd [%s]", w.Name, w.TotalDays, w.Label))
-		}
-		sb.WriteString("  " + strings.Join(parts, "   ") + "\n")
-	}
-
 	// ── Calendar ──────────────────────────────────────────────────────────
 	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
@@ -303,7 +292,7 @@ func (v *OrgOverviewView) View() string {
 	if v.calendarMode == calendarModeGrid {
 		modeLabel = "v list"
 	}
-	sb.WriteString("  " + sectionHeadingStyle.Render("Calendar") +
+	sb.WriteString("  " + sectionHeading("Calendar") +
 		"  " + dimStyle.Render(modeLabel) + "\n\n")
 
 	if v.calendarMode == calendarModeGrid {
