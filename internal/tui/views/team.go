@@ -507,20 +507,20 @@ func wordWrap(text string, width int) []string {
 	return append(lines, line)
 }
 
-// concernSeverityBadge returns a filled background badge for a concern severity.
+// concernSeverityBadge returns a symbol + colored label for a concern severity.
 func concernSeverityBadge(key, severity string) string {
 	if strings.HasPrefix(key, "stale_annotation_") {
-		return lipgloss.NewStyle().Background(lipgloss.Color("58")).Foreground(lipgloss.Color("214")).Bold(true).Padding(0, 1).Render("STALE")
+		return warningAmberStyle.Render("⚠ STALE")
 	}
 	switch strings.ToUpper(severity) {
 	case "HIGH":
-		return lipgloss.NewStyle().Background(lipgloss.Color("52")).Foreground(lipgloss.Color("9")).Bold(true).Padding(0, 1).Render("HIGH  ")
+		return riskHighStyle.Render("🔴 HIGH")
 	case "MEDIUM":
-		return lipgloss.NewStyle().Background(lipgloss.Color("94")).Foreground(lipgloss.Color("214")).Bold(true).Padding(0, 1).Render("MED   ")
+		return warningAmberStyle.Render("🟡 MED")
 	case "LOW":
-		return lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render("LOW   ")
+		return riskLowStyle.Render("🟢 LOW")
 	default:
-		return lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render(severity)
+		return dimStyle.Render("● " + severity)
 	}
 }
 
@@ -633,7 +633,12 @@ func (v *TeamReportView) renderPanel(title, badge, content string, selected bool
 		Width(v.panelW()).
 		Padding(0, 1).
 		Render(body)
-	return "  " + boxed + "\n\n"
+	// Indent every line so the full border box is uniformly offset.
+	lines := strings.Split(strings.TrimRight(boxed, "\n"), "\n")
+	for i := range lines {
+		lines[i] = "  " + lines[i]
+	}
+	return strings.Join(lines, "\n") + "\n\n"
 }
 
 // renderHeader returns a full-width dark bar with team name and sprint info.
@@ -670,16 +675,6 @@ func (v *TeamReportView) renderHeader() string {
 	return nameRendered + fill + sprintRendered
 }
 
-// zebraRow applies an alternating dark background to even-indexed rows in lists.
-func (v *TeamReportView) zebraRow(i int, content string) string {
-	if i%2 == 1 {
-		return lipgloss.NewStyle().
-			Background(lipgloss.Color("235")).
-			Width(v.panelContentW()).
-			Render(content)
-	}
-	return content
-}
 
 // View implements tea.Model.
 func (v *TeamReportView) View() string {
@@ -815,13 +810,13 @@ func (v *TeamReportView) renderContent() string {
 			for _, g := range v.goals.BusinessGoals {
 				c.WriteString(goalStatusBadge(g.Status) + "  " + g.Text + "\n")
 				if g.Note != "" {
-					for _, line := range wordWrap(g.Note, v.wrapWidth()) {
+					for _, line := range wordWrap(g.Note, v.wrapWidth()-4) {
 						c.WriteString("    " + noteStyle.Render(line) + "\n")
 					}
 				}
 			}
 		}
-		sb.WriteString(v.renderPanel("Business Goals", v.sectionBadge("section:business_goals"), c.String(), sel))
+		sb.WriteString(v.renderPanel("🎯 Business Goals", v.sectionBadge("section:business_goals"), c.String(), sel))
 	}
 
 	// ── Calendar ──────────────────────────────────────────────────────────
@@ -837,7 +832,7 @@ func (v *TeamReportView) renderContent() string {
 		} else {
 			v.renderTeamCalendarList(&c)
 		}
-		sb.WriteString(v.renderPanel("Calendar", "", c.String(), false))
+		sb.WriteString(v.renderPanel("📅 Calendar", "", c.String(), false))
 	}
 
 	// ── Sprint Status ─────────────────────────────────────────────────────
@@ -883,7 +878,7 @@ func (v *TeamReportView) renderContent() string {
 					for _, g := range v.goals.SprintGoals {
 						c.WriteString(sprintGoalStatusBadge(g.Status) + "  " + g.Text + "\n")
 						if g.Note != "" {
-							for _, line := range wordWrap(g.Note, v.wrapWidth()) {
+							for _, line := range wordWrap(g.Note, v.wrapWidth()-4) {
 								c.WriteString("    " + noteStyle.Render(line) + "\n")
 							}
 						}
@@ -897,7 +892,7 @@ func (v *TeamReportView) renderContent() string {
 				}
 			}
 		}
-		sb.WriteString(v.renderPanel("Sprint Status", v.sectionBadge("section:sprint_goals"), c.String(), sel))
+		sb.WriteString(v.renderPanel("⚡ Sprint Status", v.sectionBadge("section:sprint_goals"), c.String(), sel))
 	}
 
 	// ── Marketing ─────────────────────────────────────────────────────────
@@ -940,7 +935,7 @@ func (v *TeamReportView) renderContent() string {
 				}
 			}
 		}
-		sb.WriteString(v.renderPanel("Marketing", "", c.String(), false))
+		sb.WriteString(v.renderPanel("📣 Marketing", "", c.String(), false))
 	}
 
 	// ── Engineering ───────────────────────────────────────────────────────
@@ -969,22 +964,25 @@ func (v *TeamReportView) renderContent() string {
 			))
 
 			if len(a.RecentCommits) > 0 {
-				c.WriteString("\n" + noteStyle.Render("Recent Commits") + "\n")
-				for i, commit := range a.RecentCommits {
-					sha := dimStyle.Render(commit.SHA[:7])
-					author := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fmt.Sprintf("%-10s", commit.Author))
-					repo := dimStyle.Render("[" + commit.Repo + "]")
-					msg := commit.Message
-					if len(msg) > v.wrapWidth()-30 {
-						msg = msg[:v.wrapWidth()-33] + "…"
+				c.WriteString("\n" + noteStyle.Render("⎇  Recent Commits") + "\n")
+				for _, commit := range a.RecentCommits {
+					authorName := truncate(commit.Author, 14)
+					repoLabel := "[" + truncate(commit.Repo, 14) + "]"
+					// Compute message budget from clamped column widths.
+					msgW := v.wrapWidth() - 14 - 2 - lipgloss.Width(repoLabel) - 2
+					if msgW < 10 {
+						msgW = 10
 					}
-					c.WriteString(v.zebraRow(i, fmt.Sprintf("%s  %s  %s  %s", sha, author, msg, repo)) + "\n")
+					author := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fmt.Sprintf("%-14s", authorName))
+					repo := dimStyle.Render(repoLabel)
+					msg := fmt.Sprintf("%-*s", msgW, truncate(commit.Message, msgW))
+					c.WriteString(fmt.Sprintf("%s  %s  %s", author, msg, repo) + "\n")
 				}
 			}
 
 			if len(activeIssues) > 0 {
 				c.WriteString("\n" + noteStyle.Render("Open Issues (Current sprint)") + "\n")
-				for i, iss := range activeIssues {
+				for _, iss := range activeIssues {
 					statusStr := ""
 					if iss.ProjectStatus != "" {
 						col := lipgloss.Color("245")
@@ -1000,21 +998,21 @@ func (v *TeamReportView) renderContent() string {
 					if iss.Assignee != "" {
 						assignee = dimStyle.Render("@" + iss.Assignee)
 					}
-					c.WriteString(v.zebraRow(i, fmt.Sprintf("#%-5d  %s  %-38s  %s",
-						iss.Number, statusStr, truncate(iss.Title, 38), assignee)) + "\n")
+					c.WriteString(fmt.Sprintf("#%-5d  %s  %-38s  %s",
+						iss.Number, statusStr, truncate(iss.Title, 38), assignee) + "\n")
 				}
 			}
 
 			if len(a.MergedPRs) > 0 {
 				c.WriteString("\n" + noteStyle.Render("Merged PRs") + "\n")
-				for i, pr := range a.MergedPRs {
-					c.WriteString(v.zebraRow(i, fmt.Sprintf("#%-5d  %-42s  %s  %s",
+				for _, pr := range a.MergedPRs {
+					c.WriteString(fmt.Sprintf("#%-5d  %-42s  %s  %s",
 						pr.Number, truncate(pr.Title, 42),
-						dimStyle.Render("@"+pr.Author), dimStyle.Render(pr.MergedAt))) + "\n")
+						dimStyle.Render("@"+pr.Author), dimStyle.Render(pr.MergedAt)) + "\n")
 				}
 			}
 		}
-		sb.WriteString(v.renderPanel("Engineering", "", c.String(), false))
+		sb.WriteString(v.renderPanel("⚙  Engineering", "", c.String(), false))
 	}
 
 	// ── Concerns ──────────────────────────────────────────────────────────
@@ -1044,13 +1042,13 @@ func (v *TeamReportView) renderContent() string {
 				}
 				c.WriteString(badge + scopeStr + "  " + concern.Summary + "\n")
 				if concern.Explanation != "" {
-					for _, line := range wordWrap(concern.Explanation, v.wrapWidth()) {
+					for _, line := range wordWrap(concern.Explanation, v.wrapWidth()-4) {
 						c.WriteString("    " + noteStyle.Render(line) + "\n")
 					}
 				}
 			}
 		}
-		sb.WriteString(v.renderPanel("Concerns", v.sectionBadge("section:concerns"), c.String(), sel))
+		sb.WriteString(v.renderPanel("⚠  Concerns", v.sectionBadge("section:concerns"), c.String(), sel))
 	}
 
 	// ── Velocity ──────────────────────────────────────────────────────────
@@ -1066,12 +1064,12 @@ func (v *TeamReportView) renderContent() string {
 			c.WriteString(selectedStyle.Render(sparkline(v.velocity.Sprints)) + "\n\n")
 			c.WriteString(fmt.Sprintf("%-16s  %6s  %8s  %6s  %7s\n", "Sprint", "Score", "Issues", "PRs", "Commits"))
 			c.WriteString(dimStyle.Render(strings.Repeat("─", 52)) + "\n")
-			for i, sp := range v.velocity.Sprints {
-				c.WriteString(v.zebraRow(i, fmt.Sprintf("%-16s  %6.1f  %8.0f  %6.0f  %7.0f",
-					sp.Label, sp.Score, sp.Breakdown.Issues, sp.Breakdown.PRs, sp.Breakdown.Commits)) + "\n")
+			for _, sp := range v.velocity.Sprints {
+				c.WriteString(fmt.Sprintf("%-16s  %6.1f  %8.0f  %6.0f  %7.0f",
+					sp.Label, sp.Score, sp.Breakdown.Issues, sp.Breakdown.PRs, sp.Breakdown.Commits) + "\n")
 			}
 		}
-		sb.WriteString(v.renderPanel("Velocity", "", c.String(), false))
+		sb.WriteString(v.renderPanel("📈 Velocity", "", c.String(), false))
 	}
 
 	// ── Resource / Workload ───────────────────────────────────────────────
@@ -1086,12 +1084,12 @@ func (v *TeamReportView) renderContent() string {
 		} else {
 			c.WriteString(fmt.Sprintf("%-24s  %-10s  %s\n", "Member", "Est. Days", "Load"))
 			c.WriteString(dimStyle.Render(strings.Repeat("─", 46)) + "\n")
-			for i, m := range v.workload.Members {
-				c.WriteString(v.zebraRow(i, fmt.Sprintf("%-24s  %-10s  %s",
-					m.Name, fmt.Sprintf("%.1f days", m.EstimatedDays), workloadLabelBadge(m.Label))) + "\n")
+			for _, m := range v.workload.Members {
+				c.WriteString(fmt.Sprintf("%-24s  %-10s  %s",
+					m.Name, fmt.Sprintf("%.1f days", m.EstimatedDays), workloadLabelBadge(m.Label)) + "\n")
 			}
 		}
-		sb.WriteString(v.renderPanel("Resource / Workload", "", c.String(), false))
+		sb.WriteString(v.renderPanel("👥 Resource / Workload", "", c.String(), false))
 	}
 
 	// ── Business Metrics ──────────────────────────────────────────────────
@@ -1104,15 +1102,15 @@ func (v *TeamReportView) renderContent() string {
 		} else if v.metrics == nil || len(v.metrics.Panels) == 0 {
 			c.WriteString(dimStyle.Render("No data. Press r to sync.") + "\n")
 		} else {
-			for i, p := range v.metrics.Panels {
+			for _, p := range v.metrics.Panels {
 				value := dimStyle.Render("—")
 				if p.Value != nil {
 					value = *p.Value
 				}
-				c.WriteString(v.zebraRow(i, selectedStyle.Render(p.Title)+"  "+value) + "\n")
+				c.WriteString(selectedStyle.Render(p.Title)+"  "+value + "\n")
 			}
 		}
-		sb.WriteString(v.renderPanel("Business Metrics", "", c.String(), false))
+		sb.WriteString(v.renderPanel("📊 Business Metrics", "", c.String(), false))
 	}
 
 	sb.WriteString("\n")
