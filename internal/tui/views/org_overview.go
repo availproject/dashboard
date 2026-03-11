@@ -60,6 +60,9 @@ const (
 // calPalette maps team index → terminal color for calendar indicators.
 var calPalette = []lipgloss.Color{"14", "11", "13", "10", "9", "6"}
 
+// teamEmojis cycles through emojis for each team card.
+var teamEmojis = []string{"🚀", "⚡", "🎯", "🔥", "🌊", "🌟"}
+
 // OrgOverviewView shows all teams at a glance.
 type OrgOverviewView struct {
 	c       *client.Client
@@ -69,6 +72,8 @@ type OrgOverviewView struct {
 	errMsg  string
 	syncing bool
 	syncMsg string
+	width   int
+	height  int
 
 	// calendar
 	calendar        *client.OrgCalendarResponse
@@ -137,6 +142,11 @@ func pollOrgSync(c *client.Client, runID int64) tea.Cmd {
 // Update implements tea.Model.
 func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
+	case tea.WindowSizeMsg:
+		v.width = m.Width
+		v.height = m.Height
+		return v, nil
+
 	case orgLoadedMsg:
 		v.loading = false
 		if m.err != nil {
@@ -235,18 +245,111 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return v, nil
 }
 
+// panelW returns the content width for bordered panels.
+func (v *OrgOverviewView) panelW() int {
+	w := v.width - 6
+	if w < 60 {
+		return 60
+	}
+	return w
+}
+
+// renderHeader returns a full-width dark bar with "Org Overview" and sync/state info.
+func (v *OrgOverviewView) renderHeader() string {
+	w := v.width
+	if w < 60 {
+		w = 60
+	}
+	hBg := lipgloss.Color("17")
+
+	right := ""
+	if v.syncing {
+		right = "⟳  Syncing…"
+	} else if v.syncMsg != "" {
+		right = v.syncMsg
+	} else if v.data != nil && v.data.LastSyncedAt != nil {
+		right = "synced " + *v.data.LastSyncedAt
+	}
+
+	title := lipgloss.NewStyle().
+		Background(hBg).Foreground(lipgloss.Color("15")).Bold(true).
+		Padding(0, 2).Render("🏠 Org Overview")
+	rightRendered := lipgloss.NewStyle().
+		Background(hBg).Foreground(lipgloss.Color("8")).
+		Padding(0, 2).Render(right)
+
+	gap := w - lipgloss.Width(title) - lipgloss.Width(rightRendered)
+	if gap < 0 {
+		gap = 0
+	}
+	fill := lipgloss.NewStyle().Background(hBg).Render(strings.Repeat(" ", gap))
+	return title + fill + rightRendered
+}
+
+// renderTeamCard renders a single team as a bordered panel card.
+func (v *OrgOverviewView) renderTeamCard(i int, team client.OrgTeamItem) string {
+	selected := i == v.cursor
+	borderColor := lipgloss.Color("238")
+	if selected {
+		borderColor = lipgloss.Color("14") // cyan when selected
+	}
+
+	emoji := teamEmojis[i%len(teamEmojis)]
+	nameStr := emoji + " " + team.Name
+	if selected {
+		nameStr = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Render(nameStr)
+	} else {
+		nameStr = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Render(nameStr)
+	}
+
+	sprintStr := fmt.Sprintf("Week %d / %d", team.CurrentSprint, team.TotalSprints)
+	if team.TotalSprints > 4 {
+		sprintStr = fmt.Sprintf("Week %d / ", team.CurrentSprint) +
+			warningAmberStyle.Render(fmt.Sprintf("%d", team.TotalSprints))
+	}
+
+	risk := renderRisk(team.RiskLevel)
+
+	focus := team.Focus
+	contentW := v.panelW() - 4
+	if len(focus) > contentW {
+		focus = focus[:contentW-1] + "…"
+	}
+
+	var c strings.Builder
+	c.WriteString(dimStyle.Render("Sprint") + "  " + sprintStr +
+		"   " + dimStyle.Render("Risk") + "  " + risk + "\n")
+	if focus != "" {
+		c.WriteString("\n" + dimStyle.Render("Focus  ") + focus + "\n")
+	}
+
+	body := nameStr + "\n\n" + strings.TrimRight(c.String(), "\n")
+	boxed := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(v.panelW()).
+		Padding(0, 1).
+		Render(body)
+
+	lines := strings.Split(strings.TrimRight(boxed, "\n"), "\n")
+	for j := range lines {
+		lines[j] = "  " + lines[j]
+	}
+	return strings.Join(lines, "\n") + "\n\n"
+}
+
 // View implements tea.Model.
 func (v *OrgOverviewView) View() string {
 	var sb strings.Builder
 
-	// Sync banner
-	if v.syncMsg != "" {
-		sb.WriteString(syncBannerStyle.Render("  "+v.syncMsg) + "\n\n")
-	}
+	// ── Header bar ────────────────────────────────────────────────────────
+	sb.WriteString("\n")
+	sb.WriteString(v.renderHeader())
+	sb.WriteString("\n\n")
 
 	// Error
 	if v.errMsg != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.errMsg) + "\n\n")
+		sb.WriteString("  " + errorStyle.Render("Error: "+v.errMsg) + "\n\n")
 	}
 
 	// Loading
@@ -263,42 +366,44 @@ func (v *OrgOverviewView) View() string {
 		return sb.String()
 	}
 
-	// Team cards
-	sb.WriteString("\n")
+	// Sync banner (below header when syncing in background)
+	if v.syncMsg != "" && !v.syncing {
+		sb.WriteString("  " + syncBannerStyle.Render(v.syncMsg) + "\n\n")
+	}
+
+	// ── Team cards ────────────────────────────────────────────────────────
 	for i, team := range v.data.Teams {
-		prefix := "  "
-		name := team.Name
-		if i == v.cursor {
-			prefix = "> "
-			name = selectedStyle.Render(name)
-		}
-
-		sprint := fmt.Sprintf("Sprint %d/%d", team.CurrentSprint, team.TotalSprints)
-		risk := renderRisk(team.RiskLevel)
-		focus := team.Focus
-		if len(focus) > 50 {
-			focus = focus[:47] + "..."
-		}
-
-		line := fmt.Sprintf("%s%-20s  %-14s  |  Risk: %-20s  |  Focus: %s",
-			prefix, name, sprint, risk, focus)
-		sb.WriteString(line + "\n")
+		sb.WriteString(v.renderTeamCard(i, team))
 	}
 
 	// ── Calendar ──────────────────────────────────────────────────────────
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
-
-	modeLabel := "v grid"
-	if v.calendarMode == calendarModeGrid {
-		modeLabel = "v list"
-	}
-	sb.WriteString("  " + sectionHeading("Calendar") +
-		"  " + dimStyle.Render(modeLabel) + "\n\n")
-
-	if v.calendarMode == calendarModeGrid {
-		sb.WriteString(v.renderCalendarGrid())
-	} else {
-		sb.WriteString(v.renderCalendarList())
+	{
+		modeLabel := "v list"
+		if v.calendarMode == calendarModeList {
+			modeLabel = "v grid"
+		}
+		var c strings.Builder
+		c.WriteString(dimStyle.Render(modeLabel) + "\n\n")
+		if v.calendarMode == calendarModeGrid {
+			c.WriteString(strings.TrimRight(v.renderCalendarGrid(), "\n"))
+		} else {
+			c.WriteString(strings.TrimRight(v.renderCalendarList(), "\n"))
+		}
+		// Render as a panel matching team page style.
+		borderColor := lipgloss.Color("238")
+		heading := sectionHeading("📅 Calendar")
+		body := heading + "\n\n" + strings.TrimRight(c.String(), "\n")
+		boxed := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Width(v.panelW()).
+			Padding(0, 1).
+			Render(body)
+		lines := strings.Split(strings.TrimRight(boxed, "\n"), "\n")
+		for i := range lines {
+			lines[i] = "  " + lines[i]
+		}
+		sb.WriteString(strings.Join(lines, "\n") + "\n\n")
 	}
 
 	sb.WriteString(v.footer())
@@ -568,17 +673,12 @@ func calMondayFirst(wd time.Weekday) int {
 // ── Footer / helpers ──────────────────────────────────────────────────────────
 
 func (v *OrgOverviewView) footer() string {
-	lastSync := "Never synced"
-	if v.data != nil && v.data.LastSyncedAt != nil {
-		lastSync = "Last synced: " + *v.data.LastSyncedAt
-	}
 	calHint := "v grid"
 	if v.calendarMode == calendarModeGrid {
 		calHint = "[ ] months · v list"
 	}
 	return "\n" + dimStyle.Render(
-		"  "+lastSync+
-			"  ·  j/k navigate  ·  Enter drill in  ·  R sync org  ·  "+calHint+
+		"  j/k navigate  ·  Enter drill in  ·  R sync org  ·  "+calHint+
 			"  ·  c config  ·  q quit",
 	) + "\n"
 }
