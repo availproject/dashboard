@@ -18,7 +18,7 @@ var (
 // as a single ANSI sequence so the underline covers spaces between words.
 func sectionHeading(text string) string {
 	p := lipgloss.DefaultRenderer().ColorProfile()
-	return p.String(text).Bold().Underline().Foreground(p.Color("14")).String()
+	return p.String(text).Bold().Foreground(p.Color("15")).String()
 }
 
 type teamViewMode int
@@ -453,15 +453,15 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func goalStatusBadge(status string) string {
 	switch strings.ToLower(status) {
 	case "on_track":
-		return riskLowStyle.Render("[ON TRACK]")
+		return lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("10")).Bold(true).Padding(0, 1).Render("ON TRACK")
 	case "at_risk":
-		return warningAmberStyle.Render("[AT RISK] ")
+		return lipgloss.NewStyle().Background(lipgloss.Color("94")).Foreground(lipgloss.Color("214")).Bold(true).Padding(0, 1).Render("AT RISK ")
 	case "behind":
-		return riskHighStyle.Render("[BEHIND]  ")
+		return lipgloss.NewStyle().Background(lipgloss.Color("52")).Foreground(lipgloss.Color("9")).Bold(true).Padding(0, 1).Render("BEHIND  ")
 	case "unclear":
-		return dimStyle.Render("[UNCLEAR] ")
+		return lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render("UNCLEAR ")
 	default:
-		return dimStyle.Render("[" + status + "]")
+		return lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render(status)
 	}
 }
 
@@ -469,13 +469,13 @@ func goalStatusBadge(status string) string {
 func sprintGoalStatusBadge(status string) string {
 	switch strings.ToLower(status) {
 	case "on_track":
-		return riskLowStyle.Render("[ON TRACK]")
+		return lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("10")).Bold(true).Padding(0, 1).Render("ON TRACK")
 	case "at_risk":
-		return warningAmberStyle.Render("[AT RISK] ")
+		return lipgloss.NewStyle().Background(lipgloss.Color("94")).Foreground(lipgloss.Color("214")).Bold(true).Padding(0, 1).Render("AT RISK ")
 	case "unclear":
-		return dimStyle.Render("[UNCLEAR] ")
+		return lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render("UNCLEAR ")
 	default:
-		return dimStyle.Render("[" + status + "]")
+		return lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render(status)
 	}
 }
 
@@ -505,6 +505,35 @@ func wordWrap(text string, width int) []string {
 		}
 	}
 	return append(lines, line)
+}
+
+// concernSeverityBadge returns a filled background badge for a concern severity.
+func concernSeverityBadge(key, severity string) string {
+	if strings.HasPrefix(key, "stale_annotation_") {
+		return lipgloss.NewStyle().Background(lipgloss.Color("58")).Foreground(lipgloss.Color("214")).Bold(true).Padding(0, 1).Render("STALE")
+	}
+	switch strings.ToUpper(severity) {
+	case "HIGH":
+		return lipgloss.NewStyle().Background(lipgloss.Color("52")).Foreground(lipgloss.Color("9")).Bold(true).Padding(0, 1).Render("HIGH  ")
+	case "MEDIUM":
+		return lipgloss.NewStyle().Background(lipgloss.Color("94")).Foreground(lipgloss.Color("214")).Bold(true).Padding(0, 1).Render("MED   ")
+	case "LOW":
+		return lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render("LOW   ")
+	default:
+		return lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render(severity)
+	}
+}
+
+// workloadLabelBadge returns a filled background badge for a workload label.
+func workloadLabelBadge(label string) string {
+	switch strings.ToUpper(label) {
+	case "HIGH":
+		return lipgloss.NewStyle().Background(lipgloss.Color("52")).Foreground(lipgloss.Color("9")).Bold(true).Padding(0, 1).Render("HIGH")
+	case "LOW":
+		return lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("245")).Padding(0, 1).Render("LOW ")
+	default: // NORMAL / OK
+		return lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("10")).Padding(0, 1).Render("OK  ")
+	}
 }
 
 func (v *TeamReportView) pageSize() int {
@@ -573,6 +602,83 @@ func (v *TeamReportView) snapCursorToVisible() {
 	if len(v.cursorLines) > 0 {
 		v.cursorIdx = len(v.cursorLines) - 1
 	}
+}
+
+// panelW returns the width for bordered panels (terminal width minus indent and border).
+func (v *TeamReportView) panelW() int {
+	w := v.width - 6
+	if w < 60 {
+		return 60
+	}
+	return w
+}
+
+// panelContentW returns the visible content width inside a panel (minus padding).
+func (v *TeamReportView) panelContentW() int {
+	return v.panelW() - 2
+}
+
+// renderPanel wraps section content in a rounded border box.
+// selected highlights the border in cyan (used in annotate mode).
+func (v *TeamReportView) renderPanel(title, badge, content string, selected bool) string {
+	borderColor := lipgloss.Color("238")
+	if selected && v.mode == teamViewModeAnnotate {
+		borderColor = lipgloss.Color("14")
+	}
+	heading := sectionHeading(title) + badge
+	body := heading + "\n\n" + strings.TrimRight(content, "\n")
+	boxed := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(v.panelW()).
+		Padding(0, 1).
+		Render(body)
+	return "  " + boxed + "\n\n"
+}
+
+// renderHeader returns a full-width dark bar with team name and sprint info.
+func (v *TeamReportView) renderHeader() string {
+	w := v.width
+	if w < 60 {
+		w = 60
+	}
+	hBg := lipgloss.Color("17")
+
+	sprintInfo := ""
+	if v.sprint != nil && !v.sprintLoading {
+		sprintInfo = fmt.Sprintf("Wk %d/%d", v.sprint.CurrentSprint, v.sprint.TotalSprints)
+		if end := v.sprintEndDate(); end != "" {
+			sprintInfo += "  ends " + end
+		}
+	}
+	if v.syncing {
+		sprintInfo = "⟳  " + sprintInfo
+	}
+
+	nameRendered := lipgloss.NewStyle().
+		Background(hBg).Foreground(lipgloss.Color("15")).Bold(true).
+		Padding(0, 2).Render(v.teamName)
+	sprintRendered := lipgloss.NewStyle().
+		Background(hBg).Foreground(lipgloss.Color("8")).
+		Padding(0, 2).Render(sprintInfo)
+
+	gap := w - lipgloss.Width(nameRendered) - lipgloss.Width(sprintRendered)
+	if gap < 0 {
+		gap = 0
+	}
+	fill := lipgloss.NewStyle().Background(hBg).Render(strings.Repeat(" ", gap))
+	return nameRendered + fill + sprintRendered
+}
+
+// zebraRow applies an alternating dark background to even-indexed rows in lists.
+func (v *TeamReportView) zebraRow(i int, content string) string {
+	if i%2 == 1 {
+		return lipgloss.NewStyle().
+			Background(lipgloss.Color("235")).
+			Width(v.panelContentW()).
+			Render(content)
+	}
+	return content
 }
 
 // View implements tea.Model.
@@ -647,399 +753,366 @@ func (v *TeamReportView) wrapWidth() int {
 func (v *TeamReportView) renderContent() string {
 	var sb strings.Builder
 
-	// Cursor tracking: record the line number of each annotatable item as we render.
-	newCursorLines := make([]int, 0, 20)
+	// Cursor tracking: map annotatable item index → line number in output.
+	newCursorLines := make([]int, 0, 10)
 	annotateIdx := 0
 	markLine := func() {
 		newCursorLines = append(newCursorLines, strings.Count(sb.String(), "\n"))
 	}
-	cursorMark := func() string {
+	advance := func() bool {
 		idx := annotateIdx
 		annotateIdx++
-		if v.mode == teamViewModeAnnotate && idx == v.cursorIdx {
-			return "> "
-		}
-		return "  "
+		return v.mode == teamViewModeAnnotate && idx == v.cursorIdx
 	}
 
-	sb.WriteString("\n  " + selectedStyle.Render(v.teamName) + "\n")
+	// ── Header bar ────────────────────────────────────────────────────────
+	sb.WriteString("\n")
+	sb.WriteString(v.renderHeader())
+	sb.WriteString("\n\n")
 
+	// Team annotation row (annotate mode only)
 	if v.mode == teamViewModeAnnotate {
 		markLine()
-		sb.WriteString(cursorMark() + dimStyle.Render("[Team annotation]") + v.sectionBadge("team") + "\n")
+		teamSel := advance()
+		annStyle := dimStyle
+		if teamSel {
+			annStyle = warningAmberStyle
+		}
+		sb.WriteString("  " + annStyle.Render("[Team annotation]") + v.sectionBadge("team") + "\n\n")
 	} else {
-		// still need to advance annotateIdx so cursorIdx stays aligned
 		annotateIdx++
 		newCursorLines = append(newCursorLines, strings.Count(sb.String(), "\n"))
 	}
 
+	// Sync / error banners
 	if v.syncMsg != "" {
 		style := syncBannerStyle
 		if strings.HasPrefix(v.syncMsg, "Sync error") {
 			style = errorStyle
 		}
-		sb.WriteString(style.Render("  "+v.syncMsg) + "\n")
+		sb.WriteString("  " + style.Render(v.syncMsg) + "\n\n")
 	}
 	if v.errMsg != "" {
-		sb.WriteString(errorStyle.Render("  "+v.errMsg) + "\n")
+		sb.WriteString("  " + errorStyle.Render(v.errMsg) + "\n\n")
 	}
-
-	sb.WriteString("\n")
 
 	// ── Business Goals ────────────────────────────────────────────────────
 	{
 		hasItems := v.goals != nil && len(v.goals.BusinessGoals) > 0
-		bizCursor := "  "
+		var sel bool
 		if hasItems {
 			markLine()
-			bizCursor = cursorMark()
+			sel = advance()
 		}
-		sb.WriteString(bizCursor + sectionHeading("Business Goals") + v.sectionBadge("section:business_goals") + "\n\n")
+		var c strings.Builder
 		if v.goalsLoading {
-			sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
 		} else if v.goalsErr != "" {
-			sb.WriteString(errorStyle.Render("  Error: "+v.goalsErr) + "\n")
+			c.WriteString(errorStyle.Render("Error: "+v.goalsErr) + "\n")
 		} else if !hasItems {
-			sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
+			c.WriteString(dimStyle.Render("No data. Press r to sync.") + "\n")
 		} else {
 			for _, g := range v.goals.BusinessGoals {
-				badge := goalStatusBadge(g.Status)
-				sb.WriteString("  " + badge + " " + g.Text + "\n")
+				c.WriteString(goalStatusBadge(g.Status) + "  " + g.Text + "\n")
 				if g.Note != "" {
 					for _, line := range wordWrap(g.Note, v.wrapWidth()) {
-						sb.WriteString("    " + noteStyle.Render(line) + "\n")
+						c.WriteString("    " + noteStyle.Render(line) + "\n")
 					}
 				}
 			}
 		}
+		sb.WriteString(v.renderPanel("Business Goals", v.sectionBadge("section:business_goals"), c.String(), sel))
 	}
 
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
-
-	// ── Calendar ───────────────────────────────────────────────────────────
+	// ── Calendar ──────────────────────────────────────────────────────────
 	{
+		var c strings.Builder
 		modeLabel := "v list"
 		if v.calendarMode == calendarModeList {
 			modeLabel = "v grid"
 		}
-		sb.WriteString("  " + sectionHeading("Calendar") +
-			"  " + dimStyle.Render(modeLabel) + "\n\n")
+		c.WriteString(dimStyle.Render(modeLabel) + "\n\n")
 		if v.calendarMode == calendarModeGrid {
-			sb.WriteString(v.renderTeamCalendarGrid())
+			c.WriteString(strings.TrimRight(v.renderTeamCalendarGrid(), "\n"))
 		} else {
-			v.renderTeamCalendarList(&sb)
+			v.renderTeamCalendarList(&c)
 		}
+		sb.WriteString(v.renderPanel("Calendar", "", c.String(), false))
 	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Sprint Status ─────────────────────────────────────────────────────
 	{
-		hasSprintGoals := v.goals != nil && len(v.goals.SprintGoals) > 0
-		sprintCursor := "  "
-		if hasSprintGoals {
+		hasItems := v.goals != nil && len(v.goals.SprintGoals) > 0
+		var sel bool
+		if hasItems {
 			markLine()
-			sprintCursor = cursorMark()
+			sel = advance()
 		}
-		sb.WriteString(sprintCursor + sectionHeading("Sprint Status") + v.sectionBadge("section:sprint_goals") + "\n\n")
+		var c strings.Builder
 		if v.sprintLoading || v.goalsLoading {
-			sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
 		} else if v.sprintErr != "" {
-			sb.WriteString(errorStyle.Render("  Error: "+v.sprintErr) + "\n")
+			c.WriteString(errorStyle.Render("Error: "+v.sprintErr) + "\n")
 		} else {
-			// Sprint header line
 			if v.sprint != nil {
 				totalStr := fmt.Sprintf("%d", v.sprint.TotalSprints)
 				if v.sprint.TotalSprints > 4 {
 					totalStr = warningAmberStyle.Render(totalStr)
 				}
-				header := fmt.Sprintf("  Week %d of %s", v.sprint.CurrentSprint, totalStr)
+				header := fmt.Sprintf("Week %d of %s", v.sprint.CurrentSprint, totalStr)
 				if end := v.sprintEndDate(); end != "" {
-					header += dimStyle.Render(" · ends "+end)
+					header += dimStyle.Render(" · ends " + end)
 				}
 				if v.sprint.PlanTitle != "" {
 					planStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
 					header += dimStyle.Render("  ·  ") + planStyle.Render(v.sprint.PlanTitle)
 				}
-				sb.WriteString(header + "\n")
+				c.WriteString(header + "\n")
 				if v.sprint.StartDateMissing {
-					sb.WriteString(warningAmberStyle.Render("  ⚠  Sprint start date not found. Add it to the plan doc or annotate it in Config.") + "\n")
+					c.WriteString(warningAmberStyle.Render("⚠  Sprint start date not found. Add it to the plan doc or annotate it in Config.") + "\n")
 				}
 				if v.sprint.NextPlanStartRisk {
-					sb.WriteString(errorStyle.Render(fmt.Sprintf("  ✗  Plan extended to sprint %d — delays next plan start.", v.sprint.TotalSprints)) + "\n")
+					c.WriteString(errorStyle.Render(fmt.Sprintf("✗  Plan extended to sprint %d — delays next plan start.", v.sprint.TotalSprints)) + "\n")
 				}
 			}
-
-			// Sprint goals with status
 			if v.goals != nil {
 				if len(v.goals.SprintGoals) == 0 {
-					sb.WriteString(dimStyle.Render("\n  (no sprint goals)") + "\n")
+					c.WriteString(dimStyle.Render("\n(no sprint goals)") + "\n")
 				} else {
-					sb.WriteString("\n")
+					c.WriteString("\n")
 					for _, g := range v.goals.SprintGoals {
-						badge := sprintGoalStatusBadge(g.Status)
-						sb.WriteString("  " + badge + " " + g.Text + "\n")
+						c.WriteString(sprintGoalStatusBadge(g.Status) + "  " + g.Text + "\n")
 						if g.Note != "" {
 							for _, line := range wordWrap(g.Note, v.wrapWidth()) {
-								sb.WriteString("    " + noteStyle.Render(line) + "\n")
+								c.WriteString("    " + noteStyle.Render(line) + "\n")
 							}
 						}
 					}
 				}
-
-				// Forecast paragraph
 				if v.goals.SprintForecast != "" {
-					sb.WriteString("\n")
+					c.WriteString("\n")
 					for _, line := range wordWrap(v.goals.SprintForecast, v.wrapWidth()) {
-						sb.WriteString("  " + noteStyle.Render(line) + "\n")
+						c.WriteString(noteStyle.Render(line) + "\n")
 					}
 				}
 			}
 		}
+		sb.WriteString(v.renderPanel("Sprint Status", v.sectionBadge("section:sprint_goals"), c.String(), sel))
 	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Marketing ─────────────────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeading("Marketing") + "\n\n")
-	if v.marketingLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.marketingErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.marketingErr) + "\n")
-	} else if v.marketing == nil || len(v.marketing.Campaigns) == 0 {
-		sb.WriteString(dimStyle.Render("  No campaigns. Configure a marketing_calendar source in team config.") + "\n")
-	} else {
-		for i, camp := range v.marketing.Campaigns {
-			if i > 0 {
-				sb.WriteString("\n")
-			}
-			// Campaign header
-			statusCol := lipgloss.Color("245")
-			if camp.Status == "In Progress" {
-				statusCol = lipgloss.Color("14")
-			}
-			statusBadge := lipgloss.NewStyle().Foreground(statusCol).Render(camp.Status)
-			dateRange := ""
-			if camp.DateStart != nil && camp.DateEnd != nil {
-				dateRange = "  " + dimStyle.Render(*camp.DateStart+" – "+*camp.DateEnd)
-			}
-			sb.WriteString("  " + selectedStyle.Render(camp.Title) + "  " + statusBadge + dateRange + "\n")
-
-			// Tasks
-			for _, task := range camp.Tasks {
-				bullet := "  ○ "
-				if task.Status == "In Progress" {
-					bullet = "  ● "
-				} else if task.Status == "Done" || task.Status == "Complete" {
-					bullet = "  ✓ "
+	{
+		var c strings.Builder
+		if v.marketingLoading {
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
+		} else if v.marketingErr != "" {
+			c.WriteString(errorStyle.Render("Error: "+v.marketingErr) + "\n")
+		} else if v.marketing == nil || len(v.marketing.Campaigns) == 0 {
+			c.WriteString(dimStyle.Render("No campaigns. Configure a marketing_calendar source in team config.") + "\n")
+		} else {
+			for i, camp := range v.marketing.Campaigns {
+				if i > 0 {
+					c.WriteString("\n")
 				}
-				taskStatus := dimStyle.Render(fmt.Sprintf("%-14s", task.Status))
-				assignee := ""
-				if task.Assignee != "" {
-					assignee = "  " + dimStyle.Render(task.Assignee)
+				statusCol := lipgloss.Color("245")
+				if camp.Status == "In Progress" {
+					statusCol = lipgloss.Color("14")
 				}
-				sb.WriteString(fmt.Sprintf("  %s%s  %s%s\n", bullet, truncate(task.Title, 36), taskStatus, assignee))
+				statusBadge := lipgloss.NewStyle().Foreground(statusCol).Render(camp.Status)
+				dateRange := ""
+				if camp.DateStart != nil && camp.DateEnd != nil {
+					dateRange = "  " + dimStyle.Render(*camp.DateStart+" – "+*camp.DateEnd)
+				}
+				c.WriteString(selectedStyle.Render(camp.Title) + "  " + statusBadge + dateRange + "\n")
+				for _, task := range camp.Tasks {
+					bullet := "○ "
+					if task.Status == "In Progress" {
+						bullet = "● "
+					} else if task.Status == "Done" || task.Status == "Complete" {
+						bullet = "✓ "
+					}
+					taskStatus := dimStyle.Render(fmt.Sprintf("%-14s", task.Status))
+					assignee := ""
+					if task.Assignee != "" {
+						assignee = "  " + dimStyle.Render(task.Assignee)
+					}
+					c.WriteString(fmt.Sprintf("  %s%-36s  %s%s\n", bullet, truncate(task.Title, 36), taskStatus, assignee))
+				}
 			}
 		}
+		sb.WriteString(v.renderPanel("Marketing", "", c.String(), false))
 	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Engineering ───────────────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeading("Engineering") + "\n\n")
-	if v.activityLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.activityErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.activityErr) + "\n")
-	} else if v.activity == nil {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		a := v.activity
-		// Pre-filter issues: exclude terminal project statuses for current-sprint view.
-		var activeIssues []client.ActivityIssue
-		for _, iss := range a.OpenIssues {
-			switch iss.ProjectStatus {
-			case "Done", "Not Completed", "Not Complete", "Won't Do":
-				// skip
-			default:
-				activeIssues = append(activeIssues, iss)
-			}
-		}
-		// Summary line
-		sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
-			dimStyle.Render(fmt.Sprintf("%d commits", len(a.RecentCommits))),
-			dimStyle.Render(fmt.Sprintf("%d PRs merged", len(a.MergedPRs))),
-			dimStyle.Render(fmt.Sprintf("%d open issues", len(activeIssues))),
-		))
-		sb.WriteString("\n")
-
-		// Recent commits
-		if len(a.RecentCommits) > 0 {
-			sb.WriteString("  " + noteStyle.Render("Recent Commits") + "\n")
-			for _, c := range a.RecentCommits {
-				sha := dimStyle.Render(c.SHA[:7])
-				author := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fmt.Sprintf("%-10s", c.Author))
-				repo := dimStyle.Render("[" + c.Repo + "]")
-				msg := c.Message
-				if len(msg) > v.wrapWidth()-30 {
-					msg = msg[:v.wrapWidth()-33] + "…"
+	{
+		var c strings.Builder
+		if v.activityLoading {
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
+		} else if v.activityErr != "" {
+			c.WriteString(errorStyle.Render("Error: "+v.activityErr) + "\n")
+		} else if v.activity == nil {
+			c.WriteString(dimStyle.Render("No data. Press r to sync.") + "\n")
+		} else {
+			a := v.activity
+			var activeIssues []client.ActivityIssue
+			for _, iss := range a.OpenIssues {
+				switch iss.ProjectStatus {
+				case "Done", "Not Completed", "Not Complete", "Won't Do":
+				default:
+					activeIssues = append(activeIssues, iss)
 				}
-				sb.WriteString(fmt.Sprintf("  %s  %s  %s  %s\n", sha, author, msg, repo))
 			}
-			sb.WriteString("\n")
-		}
+			c.WriteString(fmt.Sprintf("%s  %s  %s\n",
+				dimStyle.Render(fmt.Sprintf("%d commits", len(a.RecentCommits))),
+				dimStyle.Render(fmt.Sprintf("%d PRs merged", len(a.MergedPRs))),
+				dimStyle.Render(fmt.Sprintf("%d open issues", len(activeIssues))),
+			))
 
-		// Open issues (current sprint — exclude terminal statuses)
-		if len(activeIssues) > 0 {
-			sb.WriteString("  " + noteStyle.Render("Open Issues (Current sprint)") + "\n")
-			for _, iss := range activeIssues {
-				statusStr := ""
-				if iss.ProjectStatus != "" {
-					col := lipgloss.Color("245")
-					switch iss.ProjectStatus {
-					case "In Progress":
-						col = lipgloss.Color("14")
-					case "In Review":
-						col = lipgloss.Color("12")
+			if len(a.RecentCommits) > 0 {
+				c.WriteString("\n" + noteStyle.Render("Recent Commits") + "\n")
+				for i, commit := range a.RecentCommits {
+					sha := dimStyle.Render(commit.SHA[:7])
+					author := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(fmt.Sprintf("%-10s", commit.Author))
+					repo := dimStyle.Render("[" + commit.Repo + "]")
+					msg := commit.Message
+					if len(msg) > v.wrapWidth()-30 {
+						msg = msg[:v.wrapWidth()-33] + "…"
 					}
-					statusStr = lipgloss.NewStyle().Foreground(col).Render(fmt.Sprintf("%-12s", iss.ProjectStatus))
+					c.WriteString(v.zebraRow(i, fmt.Sprintf("%s  %s  %s  %s", sha, author, msg, repo)) + "\n")
 				}
-				assignee := ""
-				if iss.Assignee != "" {
-					assignee = dimStyle.Render("@" + iss.Assignee)
-				}
-				sb.WriteString(fmt.Sprintf("  #%-5d  %s  %-38s  %s\n",
-					iss.Number, statusStr, truncate(iss.Title, 38), assignee))
 			}
-			sb.WriteString("\n")
-		}
 
-		// Merged PRs
-		if len(a.MergedPRs) > 0 {
-			sb.WriteString("  " + noteStyle.Render("Merged PRs") + "\n")
-			for _, pr := range a.MergedPRs {
-				author := dimStyle.Render("@" + pr.Author)
-				sb.WriteString(fmt.Sprintf("  #%-5d  %-42s  %s  %s\n",
-					pr.Number, truncate(pr.Title, 42), author, dimStyle.Render(pr.MergedAt)))
+			if len(activeIssues) > 0 {
+				c.WriteString("\n" + noteStyle.Render("Open Issues (Current sprint)") + "\n")
+				for i, iss := range activeIssues {
+					statusStr := ""
+					if iss.ProjectStatus != "" {
+						col := lipgloss.Color("245")
+						switch iss.ProjectStatus {
+						case "In Progress":
+							col = lipgloss.Color("14")
+						case "In Review":
+							col = lipgloss.Color("12")
+						}
+						statusStr = lipgloss.NewStyle().Foreground(col).Render(fmt.Sprintf("%-12s", iss.ProjectStatus))
+					}
+					assignee := ""
+					if iss.Assignee != "" {
+						assignee = dimStyle.Render("@" + iss.Assignee)
+					}
+					c.WriteString(v.zebraRow(i, fmt.Sprintf("#%-5d  %s  %-38s  %s",
+						iss.Number, statusStr, truncate(iss.Title, 38), assignee)) + "\n")
+				}
+			}
+
+			if len(a.MergedPRs) > 0 {
+				c.WriteString("\n" + noteStyle.Render("Merged PRs") + "\n")
+				for i, pr := range a.MergedPRs {
+					c.WriteString(v.zebraRow(i, fmt.Sprintf("#%-5d  %-42s  %s  %s",
+						pr.Number, truncate(pr.Title, 42),
+						dimStyle.Render("@"+pr.Author), dimStyle.Render(pr.MergedAt))) + "\n")
+				}
 			}
 		}
+		sb.WriteString(v.renderPanel("Engineering", "", c.String(), false))
 	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Concerns ──────────────────────────────────────────────────────────
 	{
 		hasConcerns := v.goals != nil && len(v.goals.Concerns) > 0
-		concernsCursor := "  "
+		var sel bool
 		if hasConcerns {
 			markLine()
-			concernsCursor = cursorMark()
+			sel = advance()
 		}
-		sb.WriteString(concernsCursor + sectionHeading("Concerns") + v.sectionBadge("section:concerns") + "\n\n")
+		var c strings.Builder
 		if v.goalsLoading {
-			sb.WriteString(dimStyle.Render("  Loading…") + "\n")
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
 		} else if v.goalsErr != "" {
-			sb.WriteString(errorStyle.Render("  Error: "+v.goalsErr) + "\n")
+			c.WriteString(errorStyle.Render("Error: "+v.goalsErr) + "\n")
 		} else if !hasConcerns {
-			sb.WriteString(dimStyle.Render("  (no concerns)") + "\n")
+			c.WriteString(dimStyle.Render("(no concerns)") + "\n")
 		} else {
-			for _, c := range v.goals.Concerns {
-				var severityStr string
-				if strings.HasPrefix(c.Key, "stale_annotation_") {
-					severityStr = warningAmberStyle.Render("[STALE]")
-				} else {
-					switch strings.ToUpper(c.Severity) {
-					case "HIGH":
-						severityStr = riskHighStyle.Render("[HIGH]  ")
-					case "MEDIUM":
-						severityStr = riskMediumStyle.Render("[MEDIUM]")
-					case "LOW":
-						severityStr = dimStyle.Render("[LOW]   ")
-					default:
-						severityStr = "[" + c.Severity + "]"
-					}
-				}
+			for _, concern := range v.goals.Concerns {
+				badge := concernSeverityBadge(concern.Key, concern.Severity)
 				scopeStr := ""
-				switch strings.ToLower(c.Scope) {
+				switch strings.ToLower(concern.Scope) {
 				case "strategic":
-					scopeStr = " " + dimStyle.Render("[STRATEGIC]")
+					scopeStr = "  " + dimStyle.Render("[STRATEGIC]")
 				case "sprint":
-					scopeStr = " " + dimStyle.Render("[SPRINT]   ")
+					scopeStr = "  " + dimStyle.Render("[SPRINT]   ")
 				}
-				sb.WriteString("  " + severityStr + scopeStr + " " + c.Summary + "\n")
-				if c.Explanation != "" {
-					for _, line := range wordWrap(c.Explanation, v.wrapWidth()) {
-						sb.WriteString("    " + noteStyle.Render(line) + "\n")
+				c.WriteString(badge + scopeStr + "  " + concern.Summary + "\n")
+				if concern.Explanation != "" {
+					for _, line := range wordWrap(concern.Explanation, v.wrapWidth()) {
+						c.WriteString("    " + noteStyle.Render(line) + "\n")
 					}
 				}
 			}
 		}
+		sb.WriteString(v.renderPanel("Concerns", v.sectionBadge("section:concerns"), c.String(), sel))
 	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Velocity ──────────────────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeading("Velocity") + "\n\n")
-	if v.velocityLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.velocityErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.velocityErr) + "\n")
-	} else if v.velocity == nil || len(v.velocity.Sprints) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		sb.WriteString("  " + selectedStyle.Render(sparkline(v.velocity.Sprints)) + "\n\n")
-		sb.WriteString(fmt.Sprintf("  %-16s  %6s  %8s  %6s  %7s\n", "Sprint", "Score", "Issues", "PRs", "Commits"))
-		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", 52)) + "\n")
-		for _, sp := range v.velocity.Sprints {
-			sb.WriteString(fmt.Sprintf("  %-16s  %6.1f  %8.0f  %6.0f  %7.0f\n",
-				sp.Label, sp.Score, sp.Breakdown.Issues, sp.Breakdown.PRs, sp.Breakdown.Commits))
+	{
+		var c strings.Builder
+		if v.velocityLoading {
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
+		} else if v.velocityErr != "" {
+			c.WriteString(errorStyle.Render("Error: "+v.velocityErr) + "\n")
+		} else if v.velocity == nil || len(v.velocity.Sprints) == 0 {
+			c.WriteString(dimStyle.Render("No data. Press r to sync.") + "\n")
+		} else {
+			c.WriteString(selectedStyle.Render(sparkline(v.velocity.Sprints)) + "\n\n")
+			c.WriteString(fmt.Sprintf("%-16s  %6s  %8s  %6s  %7s\n", "Sprint", "Score", "Issues", "PRs", "Commits"))
+			c.WriteString(dimStyle.Render(strings.Repeat("─", 52)) + "\n")
+			for i, sp := range v.velocity.Sprints {
+				c.WriteString(v.zebraRow(i, fmt.Sprintf("%-16s  %6.1f  %8.0f  %6.0f  %7.0f",
+					sp.Label, sp.Score, sp.Breakdown.Issues, sp.Breakdown.PRs, sp.Breakdown.Commits)) + "\n")
+			}
 		}
+		sb.WriteString(v.renderPanel("Velocity", "", c.String(), false))
 	}
-
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
 
 	// ── Resource / Workload ───────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeading("Resource / Workload") + "\n\n")
-	if v.workloadLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.workloadErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.workloadErr) + "\n")
-	} else if v.workload == nil || len(v.workload.Members) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		sb.WriteString(fmt.Sprintf("  %-24s  %-10s  %s\n", "Member", "Est. Days", "Load"))
-		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", 46)) + "\n")
-		for _, m := range v.workload.Members {
-			labelStyle := riskNormalStyle
-			switch strings.ToUpper(m.Label) {
-			case "HIGH":
-				labelStyle = riskHighStyle
-			case "LOW":
-				labelStyle = dimStyle
+	{
+		var c strings.Builder
+		if v.workloadLoading {
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
+		} else if v.workloadErr != "" {
+			c.WriteString(errorStyle.Render("Error: "+v.workloadErr) + "\n")
+		} else if v.workload == nil || len(v.workload.Members) == 0 {
+			c.WriteString(dimStyle.Render("No data. Press r to sync.") + "\n")
+		} else {
+			c.WriteString(fmt.Sprintf("%-24s  %-10s  %s\n", "Member", "Est. Days", "Load"))
+			c.WriteString(dimStyle.Render(strings.Repeat("─", 46)) + "\n")
+			for i, m := range v.workload.Members {
+				c.WriteString(v.zebraRow(i, fmt.Sprintf("%-24s  %-10s  %s",
+					m.Name, fmt.Sprintf("%.1f days", m.EstimatedDays), workloadLabelBadge(m.Label))) + "\n")
 			}
-			label := labelStyle.Render(fmt.Sprintf("[%s]", strings.ToUpper(m.Label)))
-			sb.WriteString(fmt.Sprintf("  %-24s  %-10s  %s\n", m.Name, fmt.Sprintf("%.1f days", m.EstimatedDays), label))
 		}
+		sb.WriteString(v.renderPanel("Resource / Workload", "", c.String(), false))
 	}
 
-	sb.WriteString("\n" + dimStyle.Render("  "+strings.Repeat("─", 60)) + "\n\n")
-
 	// ── Business Metrics ──────────────────────────────────────────────────
-	sb.WriteString("  " + sectionHeading("Business Metrics") + "\n\n")
-	if v.metricsLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-	} else if v.metricsErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.metricsErr) + "\n")
-	} else if v.metrics == nil || len(v.metrics.Panels) == 0 {
-		sb.WriteString(dimStyle.Render("  No data. Press r to sync.") + "\n")
-	} else {
-		for _, p := range v.metrics.Panels {
-			value := dimStyle.Render("—")
-			if p.Value != nil {
-				value = *p.Value
+	{
+		var c strings.Builder
+		if v.metricsLoading {
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
+		} else if v.metricsErr != "" {
+			c.WriteString(errorStyle.Render("Error: "+v.metricsErr) + "\n")
+		} else if v.metrics == nil || len(v.metrics.Panels) == 0 {
+			c.WriteString(dimStyle.Render("No data. Press r to sync.") + "\n")
+		} else {
+			for i, p := range v.metrics.Panels {
+				value := dimStyle.Render("—")
+				if p.Value != nil {
+					value = *p.Value
+				}
+				c.WriteString(v.zebraRow(i, selectedStyle.Render(p.Title)+"  "+value) + "\n")
 			}
-			sb.WriteString("  " + selectedStyle.Render(p.Title) + "  " + value + "\n")
 		}
+		sb.WriteString(v.renderPanel("Business Metrics", "", c.String(), false))
 	}
 
 	sb.WriteString("\n")
