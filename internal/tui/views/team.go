@@ -673,9 +673,9 @@ func (v *TeamReportView) renderHeader() string {
 		var bar strings.Builder
 		for i := 1; i <= 5; i++ {
 			if i <= wd {
-				bar.WriteString(hc("226", "█"))
+				bar.WriteString(hc("14", "█"))
 			} else {
-				bar.WriteString(hc("238", "░"))
+				bar.WriteString(hc("243", "░"))
 			}
 		}
 
@@ -685,15 +685,15 @@ func (v *TeamReportView) renderHeader() string {
 		var pips strings.Builder
 		for i := 1; i <= total; i++ {
 			if i > 1 {
-				pips.WriteString(hc("238", " "))
+				pips.WriteString(hc("243", " "))
 			}
 			switch {
 			case i < cur:
-				pips.WriteString(hc("241", "●"))
+				pips.WriteString(hc("243", "●"))
 			case i == cur:
-				pips.WriteString(lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("226")).Bold(true).Render("◉"))
+				pips.WriteString(lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("14")).Bold(true).Render("◉"))
 			default:
-				pips.WriteString(hc("238", "○"))
+				pips.WriteString(hc("243", "○"))
 			}
 		}
 
