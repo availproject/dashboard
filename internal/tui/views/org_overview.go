@@ -318,65 +318,67 @@ func (v *OrgOverviewView) renderTeamCard(i int, team client.OrgTeamItem) string 
 
 // View implements tea.Model.
 func (v *OrgOverviewView) View() string {
-	var sb strings.Builder
-
-	// ── Header bar ────────────────────────────────────────────────────────
-	sb.WriteString("\n")
-	sb.WriteString(v.renderHeader())
-	sb.WriteString("\n\n")
+	// ── Build body content ─────────────────────────────────────────────────
+	var body strings.Builder
+	body.WriteString("\n")
 
 	// Error
 	if v.errMsg != "" {
-		sb.WriteString("  " + errorStyle.Render("Error: "+v.errMsg) + "\n\n")
+		body.WriteString("  " + errorStyle.Render("Error: "+v.errMsg) + "\n\n")
 	}
 
-	// Loading
 	if v.loading {
-		sb.WriteString("  Loading…\n")
-		sb.WriteString(v.footer())
-		return sb.String()
-	}
+		body.WriteString("  Loading…\n")
+	} else if v.data == nil || len(v.data.Teams) == 0 {
+		body.WriteString("  No data yet. Press R to sync.\n")
+	} else {
+		// Sync banner
+		if v.syncMsg != "" && !v.syncing {
+			body.WriteString("  " + syncBannerStyle.Render(v.syncMsg) + "\n\n")
+		}
 
-	// No data
-	if v.data == nil || len(v.data.Teams) == 0 {
-		sb.WriteString("  No data yet. Press R to sync.\n")
-		sb.WriteString(v.footer())
-		return sb.String()
-	}
+		// ── Team cards ────────────────────────────────────────────────────
+		for i, team := range v.data.Teams {
+			body.WriteString(v.renderTeamCard(i, team))
+		}
 
-	// Sync banner (below header when syncing in background)
-	if v.syncMsg != "" && !v.syncing {
-		sb.WriteString("  " + syncBannerStyle.Render(v.syncMsg) + "\n\n")
-	}
-
-	// ── Team cards ────────────────────────────────────────────────────────
-	for i, team := range v.data.Teams {
-		sb.WriteString(v.renderTeamCard(i, team))
-	}
-
-	// ── Calendar ──────────────────────────────────────────────────────────
-	{
+		// ── Calendar ──────────────────────────────────────────────────────
 		var c strings.Builder
 		c.WriteString(strings.TrimRight(v.renderCalendarGrid(), "\n"))
-		// Render as a panel matching team page style.
 		borderColor := lipgloss.Color("238")
 		heading := sectionHeading("📅 Calendar")
-		body := heading + "\n\n" + strings.TrimRight(c.String(), "\n")
+		calBody := heading + "\n\n" + strings.TrimRight(c.String(), "\n")
 		boxed := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(borderColor).
 			Width(v.panelW()).
 			Padding(0, 1).
-			Render(body)
-		lines := strings.Split(strings.TrimRight(boxed, "\n"), "\n")
-		for i := range lines {
-			lines[i] = "  " + lines[i]
+			Render(calBody)
+		calLines := strings.Split(strings.TrimRight(boxed, "\n"), "\n")
+		for i := range calLines {
+			calLines[i] = "  " + calLines[i]
 		}
-		sb.WriteString(strings.Join(lines, "\n") + "\n\n")
+		body.WriteString(strings.Join(calLines, "\n") + "\n")
 	}
 
-	sb.WriteString(v.footer())
-	return sb.String()
+	// ── Assemble: sticky header, padded body, sticky footer ───────────────
+	bodyStr := strings.TrimRight(body.String(), "\n")
+	bodyLines := strings.Count(bodyStr, "\n") + 1
+
+	// height - 2 = space between header and footer
+	available := v.height - 2
+	if available < 0 {
+		available = 0
+	}
+	padding := available - bodyLines
+	if padding < 0 {
+		padding = 0
+	}
+
+	return v.renderHeader() + "\n" +
+		bodyStr + "\n" +
+		strings.Repeat("\n", padding) +
+		v.footer()
 }
 
 // ── Calendar rendering ────────────────────────────────────────────────────────
@@ -586,9 +588,19 @@ func calMondayFirst(wd time.Weekday) int {
 // ── Footer / helpers ──────────────────────────────────────────────────────────
 
 func (v *OrgOverviewView) footer() string {
-	return "\n" + dimStyle.Render(
-		"  j/k navigate  ·  Enter drill in  ·  R sync org  ·  [ ] months  ·  c config  ·  q quit",
-	) + "\n"
+	w := v.width
+	if w < 60 {
+		w = 60
+	}
+	hBg := lipgloss.Color("17")
+	content := lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("8")).
+		Render("  j/k navigate  ·  Enter drill in  ·  R sync org  ·  [ ] months  ·  c config  ·  q quit")
+	gap := w - lipgloss.Width(content)
+	if gap < 0 {
+		gap = 0
+	}
+	fill := lipgloss.NewStyle().Background(hBg).Render(strings.Repeat(" ", gap))
+	return content + fill
 }
 
 func renderRisk(level string) string {

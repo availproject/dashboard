@@ -531,7 +531,7 @@ func (v *TeamReportView) InterceptsEsc() bool {
 }
 
 func (v *TeamReportView) pageSize() int {
-	ps := v.height - 3
+	ps := v.height - 2
 	if ps < 5 {
 		return 5
 	}
@@ -549,11 +549,11 @@ func (v *TeamReportView) annotateItems() []annotatePickItem {
 		if len(v.goals.BusinessGoals) > 0 {
 			items = append(items, annotatePickItem{tier: "item", itemRef: "section:business_goals", label: "Business Goals"})
 		}
-		if len(v.goals.SprintGoals) > 0 {
-			items = append(items, annotatePickItem{tier: "item", itemRef: "section:sprint_goals", label: "Sprint Goals"})
-		}
 		if len(v.goals.Concerns) > 0 {
 			items = append(items, annotatePickItem{tier: "item", itemRef: "section:concerns", label: "Concerns"})
+		}
+		if len(v.goals.SprintGoals) > 0 {
+			items = append(items, annotatePickItem{tier: "item", itemRef: "section:sprint_goals", label: "Sprint Goals"})
 		}
 	}
 	return items
@@ -671,13 +671,18 @@ func (v *TeamReportView) renderHeader() string {
 			wd = 5
 		}
 		var bar strings.Builder
+		bar.WriteString(hc("243", "["))
 		for i := 1; i <= 5; i++ {
-			if i <= wd {
-				bar.WriteString(hc("14", "█"))
-			} else {
-				bar.WriteString(hc("243", "░"))
+			switch {
+			case i == wd:
+				bar.WriteString(hc("11", "█")) // today: yellow
+			case i < wd:
+				bar.WriteString(hc("14", "█")) // past: cyan
+			default:
+				bar.WriteString(hc("243", "░")) // future: dim
 			}
 		}
+		bar.WriteString(hc("243", "]"))
 
 		// Sprint-within-plan pips.
 		cur := v.sprint.CurrentSprint
@@ -691,7 +696,7 @@ func (v *TeamReportView) renderHeader() string {
 			case i < cur:
 				pips.WriteString(hc("243", "●"))
 			case i == cur:
-				pips.WriteString(lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("14")).Bold(true).Render("◉"))
+				pips.WriteString(lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("11")).Bold(true).Render("◉"))
 			default:
 				pips.WriteString(hc("243", "○"))
 			}
@@ -746,20 +751,41 @@ func (v *TeamReportView) View() string {
 
 	visible := strings.Join(lines[v.scrollY:end], "\n")
 
-	scrollIndicator := ""
-	if maxScroll > 0 {
-		pct := v.scrollY * 100 / maxScroll
-		scrollIndicator = "  " + dimStyle.Render(fmt.Sprintf("%d%%", pct))
+	// ── Sticky footer matching header style ────────────────────────────────
+	w := v.width
+	if w < 60 {
+		w = 60
+	}
+	hBg := lipgloss.Color("17")
+	hDim := func(s string) string {
+		return lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("8")).Render(s)
 	}
 
-	var footer string
+	var footerLeft string
 	switch v.mode {
 	case teamViewModeAnnotate:
-		footer = "\n" + warningAmberStyle.Render("  ANNOTATE  ") + "  " + dimStyle.Render("j/k section  ·  Enter open  ·  Esc exit") + "\n"
+		footerLeft = lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("214")).Bold(true).Render(" ANNOTATE ") +
+			hDim("  j/k section  ·  Enter open  ·  Esc exit")
 	default:
-		footer = "\n" + dimStyle.Render("  j/k scroll  ·  d/u page  ·  a annotate  ·  r sync  ·  t tag  ·  Esc back") + scrollIndicator + "\n"
+		footerLeft = hDim("  j/k scroll  ·  d/u page  ·  a annotate  ·  r sync  ·  t tag  ·  Esc back")
 	}
-	return visible + footer
+
+	var footerRight string
+	if maxScroll > 0 {
+		pct := v.scrollY * 100 / maxScroll
+		footerRight = hDim(fmt.Sprintf("  %d%%  ", pct))
+	} else {
+		footerRight = hDim("  ")
+	}
+
+	gap := w - lipgloss.Width(footerLeft) - lipgloss.Width(footerRight)
+	if gap < 0 {
+		gap = 0
+	}
+	fill := lipgloss.NewStyle().Background(hBg).Render(strings.Repeat(" ", gap))
+	footer := footerLeft + fill + footerRight
+
+	return v.renderHeader() + "\n" + visible + "\n" + footer
 }
 
 func (v *TeamReportView) sprintEndDate() string {
@@ -789,31 +815,30 @@ func (v *TeamReportView) wrapWidth() int {
 func (v *TeamReportView) renderContent() string {
 	var sb strings.Builder
 
-	// Cursor tracking: map annotatable item index → line number in output.
-	newCursorLines := make([]int, 0, 10)
-	annotateIdx := 0
-	markLine := func() {
-		newCursorLines = append(newCursorLines, strings.Count(sb.String(), "\n"))
-	}
-	advance := func() bool {
-		idx := annotateIdx
-		annotateIdx++
-		return v.mode == teamViewModeAnnotate && idx == v.cursorIdx
+	// Cursor tracking: annotateItems() is the single source of truth for order.
+	// advanceFor records the current line for the matching item and returns
+	// whether it is the selected cursor in annotate mode.  Because lookup is
+	// by identity (tier+ref) rather than position, renderContent() can render
+	// sections in any order without needing to stay in sync with annotateItems().
+	annItems := v.annotateItems()
+	newCursorLines := make([]int, len(annItems))
+	advanceFor := func(tier, ref string) bool {
+		for i, it := range annItems {
+			if it.tier == tier && it.itemRef == ref {
+				newCursorLines[i] = strings.Count(sb.String(), "\n")
+				return v.mode == teamViewModeAnnotate && i == v.cursorIdx
+			}
+		}
+		return false
 	}
 
-	// ── Header bar ────────────────────────────────────────────────────────
+	// ── Content starts with a blank line below the sticky header ──────────
 	sb.WriteString("\n")
-	sb.WriteString(v.renderHeader())
-	sb.WriteString("\n\n")
 
 	// Team annotation panel (annotate mode only)
 	if v.mode == teamViewModeAnnotate {
-		markLine()
-		teamSel := advance()
+		teamSel := advanceFor("team", "")
 		sb.WriteString(v.renderPanel("📝 "+v.teamName, v.sectionBadge("team"), dimStyle.Render("Team-level annotation"), teamSel))
-	} else {
-		annotateIdx++
-		newCursorLines = append(newCursorLines, strings.Count(sb.String(), "\n"))
 	}
 
 	// Sync / error banners
@@ -831,11 +856,7 @@ func (v *TeamReportView) renderContent() string {
 	// ── Business Goals ────────────────────────────────────────────────────
 	{
 		hasItems := v.goals != nil && len(v.goals.BusinessGoals) > 0
-		var sel bool
-		if hasItems {
-			markLine()
-			sel = advance()
-		}
+		sel := advanceFor("item", "section:business_goals")
 		var c strings.Builder
 		if v.goalsLoading {
 			c.WriteString(dimStyle.Render("Loading…") + "\n")
@@ -866,11 +887,7 @@ func (v *TeamReportView) renderContent() string {
 	// ── Concerns ──────────────────────────────────────────────────────────
 	{
 		hasConcerns := v.goals != nil && len(v.goals.Concerns) > 0
-		var sel bool
-		if hasConcerns {
-			markLine()
-			sel = advance()
-		}
+		sel := advanceFor("item", "section:concerns")
 		var c strings.Builder
 		if v.goalsLoading {
 			c.WriteString(dimStyle.Render("Loading…") + "\n")
@@ -901,12 +918,7 @@ func (v *TeamReportView) renderContent() string {
 
 	// ── Sprint Status ─────────────────────────────────────────────────────
 	{
-		hasItems := v.goals != nil && len(v.goals.SprintGoals) > 0
-		var sel bool
-		if hasItems {
-			markLine()
-			sel = advance()
-		}
+		sel := advanceFor("item", "section:sprint_goals")
 		var c strings.Builder
 		if v.sprintLoading || v.goalsLoading {
 			c.WriteString(dimStyle.Render("Loading…") + "\n")
