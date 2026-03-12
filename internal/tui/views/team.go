@@ -1148,6 +1148,15 @@ func (v *TeamReportView) renderTeamCalendarGrid() string {
 		sb.WriteString("  " + l1 + strings.Repeat(" ", pad) + gap + l2 + "\n")
 	}
 
+	// Legend
+	sb.WriteString("\n  " +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render("R") + dimStyle.Render(" release  ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("D") + dimStyle.Render(" deadline  ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render("M") + dimStyle.Render(" milestone  ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Render("C") + dimStyle.Render(" campaign  ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("s") + dimStyle.Render(" sprint") +
+		"\n")
+
 	// Events for both displayed months
 	periodStart := month1.Format("2006-01-02")
 	periodEnd := month2.AddDate(0, 1, -1).Format("2006-01-02")
