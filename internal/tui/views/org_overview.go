@@ -567,7 +567,7 @@ func (v *OrgOverviewView) renderGridCell(day int, events []client.OrgCalendarEve
 
 	dayStr := fmt.Sprintf("%2d", day)
 	if isToday {
-		dayStr = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true).Render(fmt.Sprintf("%2d", day))
+		dayStr = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true).Render(fmt.Sprintf("%2d", day))
 	} else if len(events) == 0 {
 		dayStr = dimStyle.Render(fmt.Sprintf("%2d", day))
 	}
