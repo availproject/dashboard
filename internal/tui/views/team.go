@@ -646,7 +646,7 @@ func (v *TeamReportView) renderPanel(title, badge, content string, selected bool
 	return strings.Join(lines, "\n") + "\n\n"
 }
 
-// renderHeader returns a full-width dark bar with team name and sprint info.
+// renderHeader returns a full-width dark bar with team name, day bar, and sprint pips.
 func (v *TeamReportView) renderHeader() string {
 	w := v.width
 	if w < 60 {
@@ -654,30 +654,66 @@ func (v *TeamReportView) renderHeader() string {
 	}
 	hBg := lipgloss.Color("17")
 
-	sprintInfo := ""
-	if v.sprint != nil && !v.sprintLoading {
-		sprintInfo = fmt.Sprintf("Wk %d/%d", v.sprint.CurrentSprint, v.sprint.TotalSprints)
-		if end := v.sprintEndDate(); end != "" {
-			sprintInfo += "  ends " + end
-		}
+	hc := func(fg lipgloss.Color, s string) string {
+		return lipgloss.NewStyle().Background(hBg).Foreground(fg).Render(s)
 	}
-	if v.syncing {
-		sprintInfo = "⟳  " + sprintInfo
-	}
+	hLabel := func(s string) string { return hc("8", s) }
 
 	nameRendered := lipgloss.NewStyle().
 		Background(hBg).Foreground(lipgloss.Color("15")).Bold(true).
 		Padding(0, 2).Render(v.teamName)
-	sprintRendered := lipgloss.NewStyle().
-		Background(hBg).Foreground(lipgloss.Color("8")).
-		Padding(0, 2).Render(sprintInfo)
 
-	gap := w - lipgloss.Width(nameRendered) - lipgloss.Width(sprintRendered)
+	var right string
+	if v.sprint != nil && !v.sprintLoading {
+		// Day-within-sprint bar: filled blocks up to today, empty for future.
+		wd := int(time.Now().Weekday()) // Sun=0, Mon=1…Fri=5, Sat=6
+		if wd == 0 || wd > 5 {
+			wd = 5
+		}
+		var bar strings.Builder
+		for i := 1; i <= 5; i++ {
+			if i <= wd {
+				bar.WriteString(hc("226", "█"))
+			} else {
+				bar.WriteString(hc("238", "░"))
+			}
+		}
+
+		// Sprint-within-plan pips.
+		cur := v.sprint.CurrentSprint
+		total := v.sprint.TotalSprints
+		var pips strings.Builder
+		for i := 1; i <= total; i++ {
+			if i > 1 {
+				pips.WriteString(hc("238", " "))
+			}
+			switch {
+			case i < cur:
+				pips.WriteString(hc("241", "●"))
+			case i == cur:
+				pips.WriteString(lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("226")).Bold(true).Render("◉"))
+			default:
+				pips.WriteString(hc("238", "○"))
+			}
+		}
+
+		syncPrefix := ""
+		if v.syncing {
+			syncPrefix = hc("11", "⟳") + hLabel("  ")
+		}
+		right = syncPrefix +
+			hLabel("Sprint ") + bar.String() +
+			hLabel("  Plan ") + pips.String() +
+			hLabel("  ")
+	}
+
+	rightW := lipgloss.Width(right)
+	gap := w - lipgloss.Width(nameRendered) - rightW
 	if gap < 0 {
 		gap = 0
 	}
 	fill := lipgloss.NewStyle().Background(hBg).Render(strings.Repeat(" ", gap))
-	return nameRendered + fill + sprintRendered
+	return nameRendered + fill + right
 }
 
 
