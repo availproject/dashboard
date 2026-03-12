@@ -1154,7 +1154,6 @@ func (v *TeamReportView) renderTeamCalendarGrid() string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("D") + dimStyle.Render(" deadline  ") +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render("M") + dimStyle.Render(" milestone  ") +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Render("C") + dimStyle.Render(" campaign  ") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("s") + dimStyle.Render(" sprint") +
 		"\n")
 
 	// Events for both displayed months
@@ -1271,8 +1270,6 @@ func (v *TeamReportView) teamGridCell(day int, events []client.CalendarEventItem
 			col, letter = "14", "M"
 		case "campaign_start", "campaign_end":
 			col, letter = "13", "C"
-		case "sprint_start", "sprint_end":
-			col, letter = "8", "s"
 		default:
 			col, letter = "7", "·"
 		}
