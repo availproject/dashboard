@@ -1277,6 +1277,8 @@ func (v *TeamReportView) teamGridCell(day int, events []client.CalendarEventItem
 	dayStr := fmt.Sprintf("%2d", day)
 	if isToday {
 		dayStr = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true).Render(fmt.Sprintf("%2d", day))
+	} else if len(events) == 0 {
+		dayStr = dimStyle.Render(fmt.Sprintf("%2d", day))
 	}
 	return " " + dayStr + indicator
 }
