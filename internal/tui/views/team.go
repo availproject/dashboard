@@ -86,8 +86,7 @@ type TeamReportView struct {
 	scrollY       int
 	cursorIdx     int
 	cursorLines   []int // line index per annotatable item, populated each render
-	calendarMode  calendarViewMode
-	calendarMonth time.Time // first day of displayed month (grid mode)
+	calendarMonth time.Time // first day of displayed month
 
 	height int
 	width  int
@@ -113,7 +112,6 @@ func NewTeamView(c *client.Client, teamID int64, name string) *TeamReportView {
 		activityLoading:  true,
 		marketingLoading: true,
 		calendarLoading:  true,
-		calendarMode:     calendarModeGrid,
 		calendarMonth:    time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local),
 		height:           40,
 	}
@@ -394,20 +392,10 @@ func (v *TeamReportView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					v.syncMsg = "Tagging GitHub tasks…"
 					return v, doAutotag(v.c)
 				}
-			case "v":
-				if v.calendarMode == calendarModeList {
-					v.calendarMode = calendarModeGrid
-				} else {
-					v.calendarMode = calendarModeList
-				}
 			case "[":
-				if v.calendarMode == calendarModeGrid {
-					v.calendarMonth = v.calendarMonth.AddDate(0, -1, 0)
-				}
+				v.calendarMonth = v.calendarMonth.AddDate(0, -1, 0)
 			case "]":
-				if v.calendarMode == calendarModeGrid {
-					v.calendarMonth = v.calendarMonth.AddDate(0, 1, 0)
-				}
+				v.calendarMonth = v.calendarMonth.AddDate(0, 1, 0)
 			}
 			return v, nil
 
@@ -822,16 +810,7 @@ func (v *TeamReportView) renderContent() string {
 	// ── Calendar ──────────────────────────────────────────────────────────
 	{
 		var c strings.Builder
-		modeLabel := "v list"
-		if v.calendarMode == calendarModeList {
-			modeLabel = "v grid"
-		}
-		c.WriteString(dimStyle.Render(modeLabel) + "\n\n")
-		if v.calendarMode == calendarModeGrid {
-			c.WriteString(strings.TrimRight(v.renderTeamCalendarGrid(), "\n"))
-		} else {
-			v.renderTeamCalendarList(&c)
-		}
+		c.WriteString(strings.TrimRight(v.renderTeamCalendarGrid(), "\n"))
 		sb.WriteString(v.renderPanel("📅 Calendar", "", c.String(), false))
 	}
 
@@ -1116,35 +1095,6 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString("\n")
 	v.cursorLines = newCursorLines
 	return sb.String()
-}
-
-// renderTeamCalendarList writes the list-style calendar to sb.
-func (v *TeamReportView) renderTeamCalendarList(sb *strings.Builder) {
-	if v.calendarLoading {
-		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-		return
-	}
-	if v.calendarErr != "" {
-		sb.WriteString(errorStyle.Render("  Error: "+v.calendarErr) + "\n")
-		return
-	}
-	if v.calendar == nil || (len(v.calendar.Events) == 0 && len(v.calendar.Undated) == 0) {
-		sb.WriteString(dimStyle.Render("  No calendar data. Press r to sync.") + "\n")
-		return
-	}
-	if len(v.calendar.Events) > 0 {
-		for _, e := range v.calendar.Events {
-			sb.WriteString(v.renderCalendarEvent(e))
-		}
-	}
-	if len(v.calendar.Undated) > 0 {
-		sb.WriteString("\n  " + warningAmberStyle.Render("Needs Date") + "\n")
-		for _, e := range v.calendar.Undated {
-			label := warningAmberStyle.Render("[NEEDS DATE]")
-			typeStr := dimStyle.Render(calendarEventTypeLabel(e.EventType))
-			sb.WriteString(fmt.Sprintf("  %s  %s  %s\n", label, typeStr, e.Title))
-		}
-	}
 }
 
 // renderTeamCalendarGrid renders two consecutive months side by side for a single team.
