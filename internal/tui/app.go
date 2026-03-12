@@ -166,7 +166,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		ov := views.NewOrgOverviewView(a.client)
 		a.views = append(a.views, ov)
-		return a, ov.Init()
+		cmds := []tea.Cmd{ov.Init()}
+		if a.termWidth > 0 || a.termHeight > 0 {
+			size := tea.WindowSizeMsg{Width: a.termWidth, Height: a.termHeight}
+			updated, cmd := ov.Update(size)
+			a.views[len(a.views)-1] = updated
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return a, tea.Batch(cmds...)
 
 	case ShowLoginMsg:
 		lv := views.NewLoginView(a.client)
