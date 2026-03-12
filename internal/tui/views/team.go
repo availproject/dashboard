@@ -553,7 +553,7 @@ func (v *TeamReportView) annotateItems() []annotatePickItem {
 	return items
 }
 
-// sectionBadge returns a count badge string for a section, e.g. " [2]".
+// sectionBadge returns a count badge string for a section, e.g. "[2 Annotations]".
 func (v *TeamReportView) sectionBadge(key string) string {
 	if v.goals == nil {
 		return ""
@@ -562,7 +562,7 @@ func (v *TeamReportView) sectionBadge(key string) string {
 	if len(anns) == 0 {
 		return ""
 	}
-	return " " + dimStyle.Render(fmt.Sprintf("[%d]", len(anns)))
+	return dimStyle.Render(fmt.Sprintf("[%d Annotations]", len(anns)))
 }
 
 // scrollToCursor adjusts scrollY so the cursored item is visible.
@@ -613,7 +613,18 @@ func (v *TeamReportView) renderPanel(title, badge, content string, selected bool
 	if selected && v.mode == teamViewModeAnnotate {
 		borderColor = lipgloss.Color("14")
 	}
-	heading := sectionHeading(title) + badge
+	var heading string
+	if badge == "" {
+		heading = sectionHeading(title)
+	} else {
+		titleW := lipgloss.Width(sectionHeading(title))
+		badgeW := lipgloss.Width(badge)
+		gap := v.panelContentW() - titleW - badgeW
+		if gap < 1 {
+			gap = 1
+		}
+		heading = sectionHeading(title) + strings.Repeat(" ", gap) + badge
+	}
 	body := heading + "\n\n" + strings.TrimRight(content, "\n")
 	boxed := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -814,6 +825,42 @@ func (v *TeamReportView) renderContent() string {
 		sb.WriteString(v.renderPanel("📅 Calendar", "", c.String(), false))
 	}
 
+	// ── Concerns ──────────────────────────────────────────────────────────
+	{
+		hasConcerns := v.goals != nil && len(v.goals.Concerns) > 0
+		var sel bool
+		if hasConcerns {
+			markLine()
+			sel = advance()
+		}
+		var c strings.Builder
+		if v.goalsLoading {
+			c.WriteString(dimStyle.Render("Loading…") + "\n")
+		} else if v.goalsErr != "" {
+			c.WriteString(errorStyle.Render("Error: "+v.goalsErr) + "\n")
+		} else if !hasConcerns {
+			c.WriteString(dimStyle.Render("(no concerns)") + "\n")
+		} else {
+			for _, concern := range v.goals.Concerns {
+				badge := concernSeverityBadge(concern.Key, concern.Severity)
+				scopeStr := ""
+				switch strings.ToLower(concern.Scope) {
+				case "strategic":
+					scopeStr = "  " + dimStyle.Render("[STRATEGIC]")
+				case "sprint":
+					scopeStr = "  " + dimStyle.Render("[SPRINT]   ")
+				}
+				c.WriteString(badge + scopeStr + "  " + concern.Summary + "\n")
+				if concern.Explanation != "" {
+					for _, line := range wordWrap(concern.Explanation, v.wrapWidth()-4) {
+						c.WriteString("    " + noteStyle.Render(line) + "\n")
+					}
+				}
+			}
+		}
+		sb.WriteString(v.renderPanel("⚠  Concerns", v.sectionBadge("section:concerns"), c.String(), sel))
+	}
+
 	// ── Sprint Status ─────────────────────────────────────────────────────
 	{
 		hasItems := v.goals != nil && len(v.goals.SprintGoals) > 0
@@ -992,42 +1039,6 @@ func (v *TeamReportView) renderContent() string {
 			}
 		}
 		sb.WriteString(v.renderPanel("⚙  Engineering", "", c.String(), false))
-	}
-
-	// ── Concerns ──────────────────────────────────────────────────────────
-	{
-		hasConcerns := v.goals != nil && len(v.goals.Concerns) > 0
-		var sel bool
-		if hasConcerns {
-			markLine()
-			sel = advance()
-		}
-		var c strings.Builder
-		if v.goalsLoading {
-			c.WriteString(dimStyle.Render("Loading…") + "\n")
-		} else if v.goalsErr != "" {
-			c.WriteString(errorStyle.Render("Error: "+v.goalsErr) + "\n")
-		} else if !hasConcerns {
-			c.WriteString(dimStyle.Render("(no concerns)") + "\n")
-		} else {
-			for _, concern := range v.goals.Concerns {
-				badge := concernSeverityBadge(concern.Key, concern.Severity)
-				scopeStr := ""
-				switch strings.ToLower(concern.Scope) {
-				case "strategic":
-					scopeStr = "  " + dimStyle.Render("[STRATEGIC]")
-				case "sprint":
-					scopeStr = "  " + dimStyle.Render("[SPRINT]   ")
-				}
-				c.WriteString(badge + scopeStr + "  " + concern.Summary + "\n")
-				if concern.Explanation != "" {
-					for _, line := range wordWrap(concern.Explanation, v.wrapWidth()-4) {
-						c.WriteString("    " + noteStyle.Render(line) + "\n")
-					}
-				}
-			}
-		}
-		sb.WriteString(v.renderPanel("⚠  Concerns", v.sectionBadge("section:concerns"), c.String(), sel))
 	}
 
 	// ── Velocity ──────────────────────────────────────────────────────────
