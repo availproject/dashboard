@@ -524,6 +524,12 @@ func workloadLabelBadge(label string) string {
 	}
 }
 
+// InterceptsEsc tells the App not to pop this view when esc is pressed
+// while in annotation mode — the view handles esc itself to exit the mode.
+func (v *TeamReportView) InterceptsEsc() bool {
+	return v.mode == teamViewModeAnnotate
+}
+
 func (v *TeamReportView) pageSize() int {
 	ps := v.height - 3
 	if ps < 5 {

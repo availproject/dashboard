@@ -117,14 +117,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch m.String() {
 		case "q", "ctrl+c":
-			// Quit only when at the root of the stack.
-			if len(a.views) <= 1 {
-				return a, tea.Quit
-			}
+			return a, tea.Quit
 		case "esc", "backspace":
-			// Let views that own a text input (e.g. AnnotateView) handle backspace themselves.
+			// Let views that own a text input or mode (e.g. AnnotateView, TeamReportView in annotate mode)
+			// handle esc/backspace themselves.
+			top := a.views[len(a.views)-1]
 			if m.String() == "backspace" {
-				if top, ok := a.views[len(a.views)-1].(interface{ InterceptsBackspace() bool }); ok && top.InterceptsBackspace() {
+				if v, ok := top.(interface{ InterceptsBackspace() bool }); ok && v.InterceptsBackspace() {
+					break
+				}
+			}
+			if m.String() == "esc" {
+				if v, ok := top.(interface{ InterceptsEsc() bool }); ok && v.InterceptsEsc() {
 					break
 				}
 			}
