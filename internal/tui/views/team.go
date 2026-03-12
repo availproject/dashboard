@@ -574,7 +574,7 @@ func (v *TeamReportView) scrollToCursor() {
 	if line < v.scrollY {
 		v.scrollY = line
 	} else if line >= v.scrollY+v.pageSize() {
-		v.scrollY = line - v.pageSize() + 1
+		v.scrollY = line
 	}
 }
 
@@ -764,15 +764,11 @@ func (v *TeamReportView) renderContent() string {
 	sb.WriteString(v.renderHeader())
 	sb.WriteString("\n\n")
 
-	// Team annotation row (annotate mode only)
+	// Team annotation panel (annotate mode only)
 	if v.mode == teamViewModeAnnotate {
 		markLine()
 		teamSel := advance()
-		annStyle := dimStyle
-		if teamSel {
-			annStyle = warningAmberStyle
-		}
-		sb.WriteString("  " + annStyle.Render("[Team annotation]") + v.sectionBadge("team") + "\n\n")
+		sb.WriteString(v.renderPanel("📝 "+v.teamName, v.sectionBadge("team"), dimStyle.Render("Team-level annotation"), teamSel))
 	} else {
 		annotateIdx++
 		newCursorLines = append(newCursorLines, strings.Count(sb.String(), "\n"))
