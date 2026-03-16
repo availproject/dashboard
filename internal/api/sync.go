@@ -5,9 +5,73 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+func (d *Deps) handleListSyncRuns(w http.ResponseWriter, r *http.Request) {
+	runs, err := d.Store.ListSyncRuns(r.Context(), 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Build team name map for enrichment.
+	teams, _ := d.Store.ListTeams(r.Context())
+	teamNames := make(map[int64]string, len(teams))
+	for _, t := range teams {
+		teamNames[t.ID] = t.Name
+	}
+
+	type item struct {
+		ID         int64            `json:"ID"`
+		Scope      string           `json:"Scope"`
+		TeamID     *int64           `json:"TeamID,omitempty"`
+		TeamName   *string          `json:"TeamName,omitempty"`
+		Status     string           `json:"Status"`
+		Error      *string          `json:"Error,omitempty"`
+		StartedAt  time.Time        `json:"StartedAt"`
+		FinishedAt *time.Time       `json:"FinishedAt,omitempty"`
+		DurationMs *int64           `json:"DurationMs,omitempty"`
+		Timings    map[string]int64 `json:"Timings,omitempty"`
+	}
+
+	out := make([]item, 0, len(runs))
+	for _, run := range runs {
+		it := item{
+			ID:        run.ID,
+			Scope:     run.Scope,
+			Status:    run.Status,
+			StartedAt: run.StartedAt,
+		}
+		if run.TeamID.Valid {
+			id := run.TeamID.Int64
+			it.TeamID = &id
+			if name, ok := teamNames[id]; ok {
+				it.TeamName = &name
+			}
+		}
+		if run.Error.Valid {
+			it.Error = &run.Error.String
+		}
+		if run.FinishedAt.Valid {
+			t := run.FinishedAt.Time
+			it.FinishedAt = &t
+			ms := t.Sub(run.StartedAt).Milliseconds()
+			it.DurationMs = &ms
+		}
+		if run.Timings.Valid && run.Timings.String != "" {
+			var timings map[string]int64
+			if err := json.Unmarshal([]byte(run.Timings.String), &timings); err == nil {
+				it.Timings = timings
+			}
+		}
+		out = append(out, it)
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
 
 func (d *Deps) handlePostSync(w http.ResponseWriter, r *http.Request) {
 	var body struct {

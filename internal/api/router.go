@@ -63,6 +63,7 @@ func NewRouter(deps *Deps) http.Handler {
 		r.Get("/teams/{id}/config", deps.handleGetTeamConfig)
 		r.Get("/teams/{id}/marketing-labels", deps.handleGetMarketingLabels)
 		r.Get("/teams/{id}/board-fields", deps.handleGetBoardFields)
+		r.Get("/sync", deps.handleListSyncRuns)
 		r.Get("/sync/{run_id}", deps.handleGetSyncRun)
 		r.Get("/config/sources", deps.handleListSources)
 		r.Get("/config/annotations", deps.handleListConfigAnnotations)

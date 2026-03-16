@@ -44,7 +44,9 @@ var funcMap = template.FuncMap{
 		}
 		return *s
 	},
-	"sprintBar": sprintBar,
+	"sprintBar":  sprintBar,
+	"sprintDayBar": func() template.HTML { return sprintDayBar() },
+	"sprintPips": sprintPips,
 	"safeHTML":  func(s string) template.HTML { return template.HTML(s) },
 }
 

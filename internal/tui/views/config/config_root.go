@@ -20,6 +20,7 @@ var configMenuItems = []string{
 	"Org",
 	"All Sources",
 	"Users",
+	"Sync Runs",
 }
 
 // ConfigRootView is the top-level config sub-menu.
@@ -69,6 +70,8 @@ func (v *ConfigRootView) pushSubView() tea.Cmd {
 		subView = NewConfigSourcesView(v.c)
 	case 3: // Users
 		subView = NewConfigUsersView(v.c)
+	case 4: // Sync Runs
+		subView = NewConfigSyncRunsView(v.c)
 	default:
 		return nil
 	}

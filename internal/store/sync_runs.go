@@ -124,6 +124,27 @@ func (s *Store) GetLastCompletedSyncRun(ctx context.Context, scope string, teamI
 	return scanSyncRun(rows)
 }
 
+// ListSyncRuns returns the most recent sync runs ordered newest-first.
+func (s *Store) ListSyncRuns(ctx context.Context, limit int) ([]*SyncRun, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, team_id, scope, status, error, timings, started_at, finished_at
+		   FROM sync_runs ORDER BY id DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []*SyncRun
+	for rows.Next() {
+		r, err := scanSyncRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
 func scanSyncRun(rows *sql.Rows) (*SyncRun, error) {
 	var r SyncRun
 	if err := rows.Scan(&r.ID, &r.TeamID, &r.Scope, &r.Status, &r.Error, &r.Timings, &r.StartedAt, &r.FinishedAt); err != nil {

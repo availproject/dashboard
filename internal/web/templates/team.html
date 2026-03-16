@@ -20,45 +20,7 @@
   </div>
 </div>
 
-{{/* ── 1. Sprint ───────────────────────────────────────────────────────────── */}}
-<details class="section-card" open>
-  <summary class="section-card-title">Sprint</summary>
-  <div class="section-card-body">
-    {{if .Sprint.PlanTitle}}
-    <div class="sprint-plan-row">
-      {{if .Sprint.PlanURL}}
-      <a href="{{.Sprint.PlanURL}}" target="_blank" rel="noopener" class="sprint-plan-link">{{.Sprint.PlanTitle}}</a>
-      {{else}}
-      <span class="sprint-plan-link">{{.Sprint.PlanTitle}}</span>
-      {{end}}
-    </div>
-    {{end}}
-
-    {{if gt .Sprint.TotalSprints 0}}
-    <div class="sprint-bar-row">
-      <span class="sprint-bar-label">Week {{.Sprint.CurrentSprint}} of {{.Sprint.TotalSprints}}</span>
-      <span class="sprint-bar">{{sprintBar .Sprint.CurrentSprint .Sprint.TotalSprints}}</span>
-    </div>
-    {{end}}
-
-    {{if .Sprint.StartDateMissing}}
-    <div class="warning-banner">⚠ Start date missing — sprint week position may be inaccurate.</div>
-    {{end}}
-    {{if .Sprint.NextPlanStartRisk}}
-    <div class="warning-banner">⚠ Sprint count is high — consider starting next plan soon.</div>
-    {{end}}
-
-    {{if .Sprint.Goals}}
-    <ul class="sprint-goal-list">
-      {{range .Sprint.Goals}}
-      <li>{{.}}</li>
-      {{end}}
-    </ul>
-    {{end}}
-  </div>
-</details>
-
-{{/* ── 2. Goals ────────────────────────────────────────────────────────────── */}}
+{{/* ── 1. Goals & Status ────────────────────────────────────────────────────── */}}
 <details class="section-card" open>
   <summary class="section-card-title">Goals &amp; Status</summary>
   <div class="section-card-body">
@@ -171,103 +133,152 @@
   </div>
 </details>
 
-{{/* ── 3. Workload ─────────────────────────────────────────────────────────── */}}
+{{/* ── 2. Calendar ──────────────────────────────────────────────────────────── */}}
 <details class="section-card" open>
-  <summary class="section-card-title">Workload</summary>
+  <summary class="section-card-title">
+    Calendar
+    <div class="cal-nav-inline">
+      <a href="/teams/{{.TeamID}}?mo={{.CalPrev}}" class="btn btn-sm btn-ghost">◀</a>
+      <a href="/teams/{{.TeamID}}?mo={{.CalNext}}" class="btn btn-sm btn-ghost">▶</a>
+    </div>
+  </summary>
   <div class="section-card-body">
-    {{if .Workload.Members}}
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Member</th>
-          <th class="num">Est. Days</th>
-          <th>Load</th>
-          <th class="workload-bar-col">Bar</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Workload.Members}}
-        <tr>
-          <td>{{.Name}}</td>
-          <td class="num mono">{{printf "%.1f" .EstimatedDays}}</td>
-          <td><span class="badge {{workloadClass .Label}}">{{.Label}}</span></td>
-          <td>
-            <div class="workload-bar-wrap">
-              <div class="workload-bar" style="width: {{pct .EstimatedDays 10.0}}%"></div>
-            </div>
-          </td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-    {{else}}
-    <div class="empty-state">No workload data. Sync the team to generate it.</div>
+    <div class="cal-months">
+      {{range .CalMonths}}
+      <div class="cal-month">
+        <div class="cal-month-label">{{.Label}}</div>
+        <table class="cal-grid">
+          <thead>
+            <tr>
+              <th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Weeks}}
+            <tr>
+              {{range .Days}}
+              {{if .}}
+              <td class="cal-day{{if .IsToday}} cal-today{{end}}{{if .Events}} cal-has-event{{end}}">
+                <span class="cal-daynum">{{.Day}}</span>
+                {{if .Events}}<span class="cal-dot"></span>{{end}}
+              </td>
+              {{else}}
+              <td class="cal-day cal-day-empty"></td>
+              {{end}}
+              {{end}}
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+    </div>
+
+    {{if .Calendar.Events}}
+    <div class="cal-events">
+      {{range .Calendar.Events}}
+      <div class="cal-event-row">
+        <span class="cal-event-date mono muted">{{.Date}}</span>
+        <span class="cal-event-title">{{.Title}}</span>
+        {{if eq .DateConfidence "inferred"}}<span class="muted small">~inferred</span>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if .Calendar.Undated}}
+    <div class="cal-undated">
+      <div class="muted small">Needs a date:</div>
+      {{range .Calendar.Undated}}
+      <div class="cal-event-row">
+        <span class="cal-event-title">{{.Title}}</span>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if and (not .Calendar.Events) (not .Calendar.Undated)}}
+    <div class="empty-state">No calendar events yet.</div>
     {{end}}
   </div>
 </details>
 
-{{/* ── 4. Velocity ─────────────────────────────────────────────────────────── */}}
+{{/* ── 3. Sprint ────────────────────────────────────────────────────────────── */}}
 <details class="section-card" open>
-  <summary class="section-card-title">Velocity</summary>
+  <summary class="section-card-title">Sprint</summary>
   <div class="section-card-body">
-    {{if .Velocity.Sprints}}
-    <div class="velocity-chart">
-      {{range .Velocity.Sprints}}
-      <div class="velocity-bar-col">
-        <div class="velocity-bar-wrap">
-          <div class="velocity-bar" style="height: {{pct .Score $.VelocityMax}}%"
-               title="{{.Label}}: {{printf "%.1f" .Score}}"></div>
-        </div>
-        <div class="velocity-label muted small">{{.Label}}</div>
-      </div>
+    {{if .Sprint.PlanTitle}}
+    <div class="sprint-plan-row">
+      {{if .Sprint.PlanURL}}
+      <a href="{{.Sprint.PlanURL}}" target="_blank" rel="noopener" class="sprint-plan-link">{{.Sprint.PlanTitle}}</a>
+      {{else}}
+      <span class="sprint-plan-link">{{.Sprint.PlanTitle}}</span>
       {{end}}
     </div>
-    <table class="table table-sm">
-      <thead>
-        <tr>
-          <th>Sprint</th>
-          <th class="num">Score</th>
-          <th class="num">Issues</th>
-          <th class="num">PRs</th>
-          <th class="num">Commits</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Velocity.Sprints}}
-        <tr>
-          <td>{{.Label}}</td>
-          <td class="num mono">{{printf "%.1f" .Score}}</td>
-          <td class="num mono">{{printf "%.0f" .Breakdown.Issues}}</td>
-          <td class="num mono">{{printf "%.0f" .Breakdown.PRs}}</td>
-          <td class="num mono">{{printf "%.0f" .Breakdown.Commits}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-    {{else}}
-    <div class="empty-state">No velocity data yet.</div>
+    {{end}}
+
+    {{if gt .Sprint.TotalSprints 0}}
+    <div class="sprint-bar-row">
+      <span class="sprint-bar-label">Week {{.Sprint.CurrentSprint}} of {{.Sprint.TotalSprints}}</span>
+      <span class="sprint-bar">{{sprintBar .Sprint.CurrentSprint .Sprint.TotalSprints}}</span>
+    </div>
+    <div class="sprint-bar-row">
+      <span class="sprint-bar-label">Today</span>
+      {{sprintDayBar}}
+      <span class="sprint-bar-label">Plan</span>
+      <span class="sprint-pips">{{sprintPips .Sprint.CurrentSprint .Sprint.TotalSprints}}</span>
+    </div>
+    {{end}}
+
+    {{if .Sprint.StartDateMissing}}
+    <div class="warning-banner">⚠ Start date missing — sprint week position may be inaccurate.</div>
+    {{end}}
+    {{if .Sprint.NextPlanStartRisk}}
+    <div class="warning-banner">⚠ Sprint count is high — consider starting next plan soon.</div>
+    {{end}}
+
+    {{if .Sprint.Goals}}
+    <ul class="sprint-goal-list">
+      {{range .Sprint.Goals}}
+      <li>{{.}}</li>
+      {{end}}
+    </ul>
     {{end}}
   </div>
 </details>
 
-{{/* ── 5. Metrics ──────────────────────────────────────────────────────────── */}}
-{{if .Metrics.Panels}}
+{{/* ── 4. Marketing ─────────────────────────────────────────────────────────── */}}
+{{if .Marketing.Campaigns}}
 <details class="section-card" open>
-  <summary class="section-card-title">Metrics</summary>
+  <summary class="section-card-title">Marketing</summary>
   <div class="section-card-body">
-    <div class="metrics-grid">
-      {{range .Metrics.Panels}}
-      <div class="metric-panel">
-        <div class="metric-title muted">{{.Title}}</div>
-        <div class="metric-value mono">{{if .Value}}{{deref .Value}}{{else}}—{{end}}</div>
+    {{range .Marketing.Campaigns}}
+    <div class="campaign-card">
+      <div class="campaign-header">
+        <span class="campaign-title">{{.Title}}</span>
+        <span class="badge {{statusClass .Status}}">{{.Status}}</span>
+        {{if .DateStart}}
+        <span class="muted small">{{deref .DateStart}}{{if .DateEnd}} – {{deref .DateEnd}}{{end}}</span>
+        {{end}}
       </div>
+      {{if .Tasks}}
+      <ul class="campaign-tasks">
+        {{range .Tasks}}
+        <li class="campaign-task">
+          <span class="badge {{statusClass .Status}} badge-sm">{{.Status}}</span>
+          <span>{{.Title}}</span>
+          {{if .Assignee}}<span class="muted small">· {{.Assignee}}</span>{{end}}
+        </li>
+        {{end}}
+      </ul>
       {{end}}
     </div>
+    {{end}}
   </div>
 </details>
 {{end}}
 
-{{/* ── 6. Activity ─────────────────────────────────────────────────────────── */}}
+{{/* ── 5. Engineering Activity ──────────────────────────────────────────────── */}}
 <details class="section-card" open>
   <summary class="section-card-title">Engineering Activity</summary>
   <div class="section-card-body">
@@ -353,105 +364,100 @@
   </div>
 </details>
 
-{{/* ── 7. Marketing ────────────────────────────────────────────────────────── */}}
-{{if .Marketing.Campaigns}}
+{{/* ── 6. Velocity ──────────────────────────────────────────────────────────── */}}
 <details class="section-card" open>
-  <summary class="section-card-title">Marketing</summary>
+  <summary class="section-card-title">Velocity</summary>
   <div class="section-card-body">
-    {{range .Marketing.Campaigns}}
-    <div class="campaign-card">
-      <div class="campaign-header">
-        <span class="campaign-title">{{.Title}}</span>
-        <span class="badge {{statusClass .Status}}">{{.Status}}</span>
-        {{if .DateStart}}
-        <span class="muted small">{{deref .DateStart}}{{if .DateEnd}} – {{deref .DateEnd}}{{end}}</span>
-        {{end}}
+    {{if .Velocity.Sprints}}
+    <div class="velocity-chart">
+      {{range .Velocity.Sprints}}
+      <div class="velocity-bar-col">
+        <div class="velocity-bar-wrap">
+          <div class="velocity-bar" style="height: {{pct .Score $.VelocityMax}}%"
+               title="{{.Label}}: {{printf "%.1f" .Score}}"></div>
+        </div>
+        <div class="velocity-label muted small">{{.Label}}</div>
       </div>
-      {{if .Tasks}}
-      <ul class="campaign-tasks">
-        {{range .Tasks}}
-        <li class="campaign-task">
-          <span class="badge {{statusClass .Status}} badge-sm">{{.Status}}</span>
-          <span>{{.Title}}</span>
-          {{if .Assignee}}<span class="muted small">· {{.Assignee}}</span>{{end}}
-        </li>
-        {{end}}
-      </ul>
       {{end}}
     </div>
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Sprint</th>
+          <th class="num">Score</th>
+          <th class="num">Issues</th>
+          <th class="num">PRs</th>
+          <th class="num">Commits</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Velocity.Sprints}}
+        <tr>
+          <td>{{.Label}}</td>
+          <td class="num mono">{{printf "%.1f" .Score}}</td>
+          <td class="num mono">{{printf "%.0f" .Breakdown.Issues}}</td>
+          <td class="num mono">{{printf "%.0f" .Breakdown.PRs}}</td>
+          <td class="num mono">{{printf "%.0f" .Breakdown.Commits}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty-state">No velocity data yet.</div>
     {{end}}
+  </div>
+</details>
+
+{{/* ── 7. Workload ──────────────────────────────────────────────────────────── */}}
+<details class="section-card" open>
+  <summary class="section-card-title">Workload</summary>
+  <div class="section-card-body">
+    {{if .Workload.Members}}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Member</th>
+          <th class="num">Est. Days</th>
+          <th>Load</th>
+          <th class="workload-bar-col">Bar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Workload.Members}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td class="num mono">{{printf "%.1f" .EstimatedDays}}</td>
+          <td><span class="badge {{workloadClass .Label}}">{{.Label}}</span></td>
+          <td>
+            <div class="workload-bar-wrap">
+              <div class="workload-bar" style="width: {{pct .EstimatedDays 10.0}}%"></div>
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty-state">No workload data. Sync the team to generate it.</div>
+    {{end}}
+  </div>
+</details>
+
+{{/* ── 8. Metrics ───────────────────────────────────────────────────────────── */}}
+{{if .Metrics.Panels}}
+<details class="section-card" open>
+  <summary class="section-card-title">Metrics</summary>
+  <div class="section-card-body">
+    <div class="metrics-grid">
+      {{range .Metrics.Panels}}
+      <div class="metric-panel">
+        <div class="metric-title muted">{{.Title}}</div>
+        <div class="metric-value mono">{{if .Value}}{{deref .Value}}{{else}}—{{end}}</div>
+      </div>
+      {{end}}
+    </div>
   </div>
 </details>
 {{end}}
-
-{{/* ── 8. Calendar ─────────────────────────────────────────────────────────── */}}
-<details class="section-card" open>
-  <summary class="section-card-title">
-    Calendar
-    <div class="cal-nav-inline">
-      <a href="/teams/{{.TeamID}}?mo={{.CalPrev}}" class="btn btn-sm btn-ghost">◀</a>
-      <a href="/teams/{{.TeamID}}?mo={{.CalNext}}" class="btn btn-sm btn-ghost">▶</a>
-    </div>
-  </summary>
-  <div class="section-card-body">
-    <div class="cal-months">
-      {{range .CalMonths}}
-      <div class="cal-month">
-        <div class="cal-month-label">{{.Label}}</div>
-        <table class="cal-grid">
-          <thead>
-            <tr>
-              <th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th>
-            </tr>
-          </thead>
-          <tbody>
-            {{range .Weeks}}
-            <tr>
-              {{range .Days}}
-              {{if .}}
-              <td class="cal-day{{if .IsToday}} cal-today{{end}}{{if .Events}} cal-has-event{{end}}">
-                <span class="cal-daynum">{{.Day}}</span>
-                {{if .Events}}<span class="cal-dot"></span>{{end}}
-              </td>
-              {{else}}
-              <td class="cal-day cal-day-empty"></td>
-              {{end}}
-              {{end}}
-            </tr>
-            {{end}}
-          </tbody>
-        </table>
-      </div>
-      {{end}}
-    </div>
-
-    {{if .Calendar.Events}}
-    <div class="cal-events">
-      {{range .Calendar.Events}}
-      <div class="cal-event-row">
-        <span class="cal-event-date mono muted">{{.Date}}</span>
-        <span class="cal-event-title">{{.Title}}</span>
-        {{if eq .DateConfidence "inferred"}}<span class="muted small">~inferred</span>{{end}}
-      </div>
-      {{end}}
-    </div>
-    {{end}}
-
-    {{if .Calendar.Undated}}
-    <div class="cal-undated">
-      <div class="muted small">Needs a date:</div>
-      {{range .Calendar.Undated}}
-      <div class="cal-event-row">
-        <span class="cal-event-title">{{.Title}}</span>
-      </div>
-      {{end}}
-    </div>
-    {{end}}
-
-    {{if and (not .Calendar.Events) (not .Calendar.Undated)}}
-    <div class="empty-state">No calendar events yet.</div>
-    {{end}}
-  </div>
-</details>
 
 {{end}}

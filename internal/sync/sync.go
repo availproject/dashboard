@@ -22,7 +22,8 @@ import (
 type teamSyncData struct {
 	currentPlanText    string
 	goalsDocText       string
-	boardItems         []githubconn.BoardItem
+	boardItems         []githubconn.BoardItem // current-sprint filtered (workload, velocity, activity snapshot)
+	allBoardItems      []githubconn.BoardItem // team-area filtered, all sprints (team_status, auto_close)
 	mergedPRs          []*gh.PullRequest
 	commits            []*gh.RepositoryCommit
 	marketingCampaigns []notionconn.MarketingCampaign
@@ -165,6 +166,28 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 		return td
 	}
 
+	// Determine marketing parameters (marketing_label + marketing_calendar DB ID).
+	// Done upfront so we can launch the marketing DB query in parallel with content fetches.
+	type marketingParams struct {
+		label string
+		dbID  string
+	}
+	var mkt *marketingParams
+	if team, err := e.store.GetTeam(ctx, teamID); err == nil && team.MarketingLabel.Valid && team.MarketingLabel.String != "" {
+		for _, cfg := range configs {
+			if cfg.Purpose == "marketing_calendar" {
+				if item, err := e.store.GetCatalogueItem(ctx, cfg.CatalogueID); err == nil {
+					mkt = &marketingParams{label: team.MarketingLabel.String, dbID: item.ExternalID}
+					break
+				}
+			}
+		}
+		if mkt == nil {
+			log.Printf("INFO  sync [team %d]: marketing_label set to %q but no marketing_calendar source configured; skipping",
+				teamID, team.MarketingLabel.String)
+		}
+	}
+
 	// Separate configs into content sources (fetch in parallel) and GitHub sources (sequential).
 	var contentWork []notionFetchWork
 	var githubConfigs []*store.SourceConfig
@@ -212,6 +235,25 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 
 	if !hasGithubProject(githubConfigs, githubItems) {
 		log.Printf("WARN  sync [team %d]: no github_project source configured; board items will be empty", teamID)
+	}
+
+	// Launch marketing DB query in parallel with content fetches.
+	// FetchMarketingCampaignsMeta is a single Notion API call; running it concurrently
+	// with the content fetch goroutines hides most of its latency.
+	type mktMetaResult struct {
+		metas []notionconn.CampaignMeta
+		err   error
+		ms    int64
+	}
+	mktMetaCh := make(chan mktMetaResult, 1)
+	if mkt != nil {
+		go func() {
+			t0 := time.Now()
+			metas, err := e.notion.FetchMarketingCampaignsMeta(ctx, mkt.dbID, mkt.label)
+			mktMetaCh <- mktMetaResult{metas: metas, err: err, ms: time.Since(t0).Milliseconds()}
+		}()
+	} else {
+		mktMetaCh <- mktMetaResult{}
 	}
 
 	// Fetch Notion/file content in parallel.
@@ -273,9 +315,36 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	timings.record(prefix+"content_fetch_ms", fetchStart)
 	log.Printf("INFO  sync [team %d]: content fetch done in %s", teamID, time.Since(fetchStart).Round(time.Millisecond))
 
-	// GitHub sources: fetch sequentially (rate-limit friendly).
-	// Fetch all commits without a login filter so we can discover new contributors.
-	log.Printf("INFO  sync [team %d]: fetching %d github source(s)", teamID, len(githubConfigs))
+	// Collect marketing meta result (was running in parallel with content fetch).
+	mktMeta := <-mktMetaCh
+	if mkt != nil {
+		timings.set(prefix+"marketing_meta_ms", mktMeta.ms)
+		if mktMeta.err != nil {
+			errs["marketing_meta"] = mktMeta.err.Error()
+			log.Printf("WARN  sync [team %d]: marketing meta fetch: %v", teamID, mktMeta.err)
+		}
+	}
+
+	// Start marketing task-page fetches in a background goroutine.
+	// These are independent of GitHub and run in parallel with github_fetch.
+	type mktTasksResult struct {
+		campaigns []notionconn.MarketingCampaign
+		ms        int64
+	}
+	mktTasksCh := make(chan mktTasksResult, 1)
+	if mkt != nil && mktMeta.err == nil && len(mktMeta.metas) > 0 {
+		go func() {
+			t0 := time.Now()
+			campaigns := e.fetchMarketingTasksCached(ctx, teamID, mkt.label, mktMeta.metas, errs)
+			mktTasksCh <- mktTasksResult{campaigns: campaigns, ms: time.Since(t0).Milliseconds()}
+		}()
+	} else {
+		mktTasksCh <- mktTasksResult{}
+	}
+
+	// GitHub sources: fetch all repos and the project board in parallel.
+	// PRs, commits, and board items are independent across sources.
+	log.Printf("INFO  sync [team %d]: fetching %d github source(s) in parallel", teamID, len(githubConfigs))
 	existingMembers, _ := e.store.GetTeamMembers(ctx, teamID)
 	knownLogins := map[string]bool{}
 	for _, m := range existingMembers {
@@ -285,7 +354,10 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	}
 	log.Printf("INFO  sync [team %d]: %d existing members with github logins", teamID, len(knownLogins))
 
+	var ghMu sync.Mutex // protects td.mergedPRs/commits/boardItems, errs, knownLogins
+	var ghWg sync.WaitGroup
 	githubStart := time.Now()
+
 	for _, cfg := range githubConfigs {
 		item := githubItems[cfg.ID]
 		since := item.UpdatedAt
@@ -300,31 +372,49 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 			}
 			log.Printf("INFO  sync [team %d]: github_repo %s/%s (since %s)", teamID, owner, repo, since.Format("2006-01-02"))
 
-			t0 := time.Now()
-			prs, fetchErr := e.github.FetchMergedPRs(ctx, owner, repo, since)
-			timings.record(prefix+"github:"+key+":prs_ms", t0)
-			if fetchErr != nil {
-				errs[key+":prs"] = fetchErr.Error()
-				log.Printf("WARN  sync [team %d]: %s fetch PRs: %v", teamID, key, fetchErr)
-			} else {
+			// PRs fetch
+			ghWg.Add(1)
+			go func(key, owner, repo string, since time.Time) {
+				defer ghWg.Done()
+				t0 := time.Now()
+				prs, fetchErr := e.github.FetchMergedPRs(ctx, owner, repo, since)
+				timings.record(prefix+"github:"+key+":prs_ms", t0)
+				if fetchErr != nil {
+					ghMu.Lock()
+					errs[key+":prs"] = fetchErr.Error()
+					ghMu.Unlock()
+					log.Printf("WARN  sync [team %d]: %s fetch PRs: %v", teamID, key, fetchErr)
+					return
+				}
 				log.Printf("INFO  sync [team %d]: %s: %d merged PRs", teamID, key, len(prs))
+				ghMu.Lock()
 				td.mergedPRs = append(td.mergedPRs, prs...)
-			}
+				ghMu.Unlock()
+			}(key, owner, repo, since)
 
-			// Fetch all commits; auto-add new contributors as team members.
-			// Use at least a 90-day window so newly-added repos discover historical contributors.
-			commitSince := since
-			if floor := time.Now().AddDate(0, 0, -90); since.After(floor) {
-				commitSince = floor
-			}
-			t0 = time.Now()
-			commits, fetchErr := e.github.FetchCommits(ctx, owner, repo, commitSince, time.Now(), nil)
-			timings.record(prefix+"github:"+key+":commits_ms", t0)
-			if fetchErr != nil {
-				errs[key+":commits"] = fetchErr.Error()
-				log.Printf("WARN  sync [team %d]: %s fetch commits: %v", teamID, key, fetchErr)
-			} else {
-				newMembers := 0
+			// Commits fetch (also handles member discovery and TouchCatalogueItem)
+			ghWg.Add(1)
+			go func(key, owner, repo string, since time.Time, itemID int64) {
+				defer ghWg.Done()
+				commitSince := since
+				if floor := time.Now().AddDate(0, 0, -90); since.After(floor) {
+					commitSince = floor
+				}
+				t0 := time.Now()
+				commits, fetchErr := e.github.FetchCommits(ctx, owner, repo, commitSince, time.Now(), nil)
+				timings.record(prefix+"github:"+key+":commits_ms", t0)
+				if fetchErr != nil {
+					ghMu.Lock()
+					errs[key+":commits"] = fetchErr.Error()
+					ghMu.Unlock()
+					log.Printf("WARN  sync [team %d]: %s fetch commits: %v", teamID, key, fetchErr)
+					return
+				}
+
+				// Collect new members under the lock, then write to DB outside it.
+				type newMember struct{ login, name string }
+				var newMembers []newMember
+				ghMu.Lock()
 				for _, commit := range commits {
 					if commit.Author == nil {
 						continue
@@ -339,16 +429,19 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 							name = n
 						}
 					}
-					_ = e.store.UpsertMemberByGithubLogin(ctx, teamID, login, name)
-					knownLogins[login] = true
-					newMembers++
-					log.Printf("INFO  sync [team %d]: auto-added member %q (%s) from commits", teamID, name, login)
+					knownLogins[login] = true // mark before releasing lock
+					newMembers = append(newMembers, newMember{login, name})
 				}
-				log.Printf("INFO  sync [team %d]: %s: %d commits, %d new members discovered", teamID, key, len(commits), newMembers)
 				td.commits = append(td.commits, commits...)
-			}
+				ghMu.Unlock()
 
-			_ = e.store.TouchCatalogueItem(ctx, item.ID)
+				for _, nm := range newMembers {
+					_ = e.store.UpsertMemberByGithubLogin(ctx, teamID, nm.login, nm.name)
+					log.Printf("INFO  sync [team %d]: auto-added member %q (%s) from commits", teamID, nm.name, nm.login)
+				}
+				log.Printf("INFO  sync [team %d]: %s: %d commits, %d new members discovered", teamID, key, len(commits), len(newMembers))
+				_ = e.store.TouchCatalogueItem(ctx, itemID)
+			}(key, owner, repo, since, item.ID)
 
 		case "github_project":
 			meta := parseJSONMeta(item.SourceMeta)
@@ -357,28 +450,42 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 				errs[key+":no_project_id"] = "missing project_id in source_meta"
 				continue
 			}
-			t0 := time.Now()
-			items, fetchErr := e.github.FetchProjectItems(ctx, pid)
-			timings.record(prefix+"github:"+key+":board_ms", t0)
-			if fetchErr != nil {
-				errs[key+":board"] = fetchErr.Error()
-				log.Printf("WARN  sync [team %d]: %s fetch board: %v", teamID, key, fetchErr)
-			} else {
+			ghWg.Add(1)
+			go func(key, pid string, cfg *store.SourceConfig, itemID int64) {
+				defer ghWg.Done()
+				t0 := time.Now()
+				items, fetchErr := e.github.FetchProjectItems(ctx, pid)
+				timings.record(prefix+"github:"+key+":board_ms", t0)
+				if fetchErr != nil {
+					ghMu.Lock()
+					errs[key+":board"] = fetchErr.Error()
+					ghMu.Unlock()
+					log.Printf("WARN  sync [team %d]: %s fetch board: %v", teamID, key, fetchErr)
+					return
+				}
 				bcfg := parseBoardConfig(cfg.ConfigMeta)
-				before := len(items)
-				items = filterBoardItems(items, bcfg, time.Now())
-				log.Printf("INFO  sync [team %d]: %s: %d board items (%d after filter) in %s", teamID, key, before, len(items), time.Since(t0).Round(time.Millisecond))
-				td.boardItems = append(td.boardItems, items...)
-			}
-			_ = e.store.TouchCatalogueItem(ctx, item.ID)
+				// allItems: team-area filter only — all sprints visible to team_status and auto_close.
+				// currentItems: also sprint-window filtered — used for workload, velocity, activity snapshot.
+				allItems := applyAreaFilter(items, bcfg)
+				currentItems := applySprintFilter(allItems, bcfg, time.Now())
+				log.Printf("INFO  sync [team %d]: %s: %d board items (%d in team area, %d in current sprint) in %s",
+					teamID, key, len(items), len(allItems), len(currentItems), time.Since(t0).Round(time.Millisecond))
+				ghMu.Lock()
+				td.allBoardItems = append(td.allBoardItems, allItems...)
+				td.boardItems = append(td.boardItems, currentItems...)
+				ghMu.Unlock()
+				_ = e.store.TouchCatalogueItem(ctx, itemID)
+			}(key, pid, cfg, item.ID)
 		}
 	}
+	ghWg.Wait()
 	timings.record(prefix+"github_fetch_ms", githubStart)
 
 	// Auto-close board items that are terminal-status but still open on GitHub.
+	// Uses allBoardItems so items from any sprint (not just current) are caught.
 	autoCloseStart := time.Now()
 	terminalStatuses := map[string]bool{"Done": true, "Won't Do": true, "Not Complete": true}
-	for _, bi := range td.boardItems {
+	for _, bi := range td.allBoardItems {
 		if bi.State != "open" || !terminalStatuses[bi.Status] {
 			continue
 		}
@@ -394,8 +501,12 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	}
 	timings.record(prefix+"auto_close_ms", autoCloseStart)
 
-	// Marketing campaigns: fetch if team has a marketing_label configured.
-	td.marketingCampaigns = e.fetchMarketingCampaigns(ctx, teamID, errs)
+	// Collect marketing tasks result (was running in parallel with github_fetch).
+	mktResult := <-mktTasksCh
+	if mkt != nil {
+		timings.set(prefix+"marketing_tasks_ms", mktResult.ms)
+		td.marketingCampaigns = mktResult.campaigns
+	}
 
 	// Persist activity and marketing snapshots for the API.
 	e.saveActivitySnapshot(ctx, teamID, &td)
@@ -404,43 +515,88 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	return td
 }
 
-// fetchMarketingCampaigns fetches marketing campaigns for a team if it has a
-// marketing_label and there is an org-level marketing_calendar source configured.
-func (e *Engine) fetchMarketingCampaigns(ctx context.Context, teamID int64, errs map[string]string) []notionconn.MarketingCampaign {
-	team, err := e.store.GetTeam(ctx, teamID)
-	if err != nil || !team.MarketingLabel.Valid || team.MarketingLabel.String == "" {
-		return nil
+// fetchMarketingTasksCached fetches all task pages for the given campaign metas
+// in parallel, using per-page caching to skip re-fetching block content for
+// unchanged pages. Returns fully-assembled MarketingCampaign values.
+func (e *Engine) fetchMarketingTasksCached(
+	ctx context.Context,
+	teamID int64,
+	label string,
+	metas []notionconn.CampaignMeta,
+	errs map[string]string,
+) []notionconn.MarketingCampaign {
+	// Collect unique task page IDs with their campaign index.
+	type taskRef struct {
+		taskID      string
+		campaignIdx int
 	}
-	label := team.MarketingLabel.String
-
-	// Find the team-level marketing_calendar source.
-	teamConfigs, err := e.store.GetSourceConfigsForScope(ctx, sql.NullInt64{Int64: teamID, Valid: true})
-	if err != nil {
-		return nil
-	}
-	var mktDBID string
-	for _, cfg := range teamConfigs {
-		if cfg.Purpose == "marketing_calendar" {
-			item, err := e.store.GetCatalogueItem(ctx, cfg.CatalogueID)
-			if err == nil {
-				mktDBID = item.ExternalID
-				break
+	var refs []taskRef
+	seen := map[string]bool{}
+	for i, m := range metas {
+		for _, id := range m.TaskIDs {
+			if !seen[id] {
+				seen[id] = true
+				refs = append(refs, taskRef{taskID: id, campaignIdx: i})
 			}
 		}
 	}
-	if mktDBID == "" {
-		log.Printf("INFO  sync [team %d]: marketing_label set to %q but no marketing_calendar source configured for team; skipping", teamID, label)
-		return nil
+
+	type taskResult struct {
+		campaignIdx int
+		task        notionconn.MarketingTask
+	}
+	resultCh := make(chan taskResult, len(refs))
+	var wg sync.WaitGroup
+	for _, ref := range refs {
+		wg.Add(1)
+		go func(r taskRef) {
+			defer wg.Done()
+			cached, _ := e.store.GetMarketingPageCache(ctx, r.taskID)
+			knownLastEdited := ""
+			if cached != nil {
+				knownLastEdited = cached.LastEdited
+			}
+			task, lastEdited, changed, err := e.notion.FetchMarketingTaskCached(ctx, r.taskID, knownLastEdited)
+			if err != nil {
+				log.Printf("WARN  sync [team %d]: fetch marketing task %s: %v", teamID, r.taskID, err)
+				return
+			}
+			if !changed && cached != nil {
+				// Page unchanged — use cached block content.
+				task.Body = cached.Body
+			} else if changed {
+				// Store updated content in cache.
+				_ = e.store.UpsertMarketingPageCache(ctx, store.MarketingPageCache{
+					PageID:     r.taskID,
+					LastEdited: lastEdited,
+					Title:      task.Title,
+					Status:     task.Status,
+					Assignee:   task.Assignee,
+					Body:       task.Body,
+				})
+			}
+			resultCh <- taskResult{campaignIdx: r.campaignIdx, task: task}
+		}(ref)
+	}
+	go func() { wg.Wait(); close(resultCh) }()
+
+	// Assemble campaign structs from metadata + fetched tasks.
+	campaigns := make([]notionconn.MarketingCampaign, len(metas))
+	for i, m := range metas {
+		campaigns[i] = notionconn.MarketingCampaign{
+			PageID:    m.PageID,
+			Title:     m.Title,
+			Status:    m.Status,
+			DateStart: m.DateStart,
+			DateEnd:   m.DateEnd,
+		}
+	}
+	for tr := range resultCh {
+		campaigns[tr.campaignIdx].Tasks = append(campaigns[tr.campaignIdx].Tasks, tr.task)
 	}
 
-	t0 := time.Now()
-	campaigns, err := e.notion.FetchMarketingCampaigns(ctx, mktDBID, label)
-	if err != nil {
-		errs[fmt.Sprintf("team_%d_marketing", teamID)] = err.Error()
-		log.Printf("WARN  sync [team %d]: fetch marketing campaigns: %v", teamID, err)
-		return nil
-	}
-	log.Printf("INFO  sync [team %d]: fetched %d marketing campaign(s) (label=%q) in %s", teamID, len(campaigns), label, time.Since(t0).Round(time.Millisecond))
+	log.Printf("INFO  sync [team %d]: assembled %d marketing campaign(s) with %d task page(s) (label=%q)",
+		teamID, len(campaigns), len(refs), label)
 	return campaigns
 }
 
@@ -676,7 +832,7 @@ func (e *Engine) runTeamPipelines(ctx context.Context, teamID int64, td teamSync
 				GoalsDocText:       td.goalsDocText,
 				SprintPlanText:     td.currentPlanText,
 				SprintMeta:         sprintMeta,
-				OpenIssues:         boardItemsToAny(td.boardItems),
+				OpenIssues:         boardItemsToAny(td.allBoardItems, time.Now()),
 				MergedPRs:          prsToAny(td.mergedPRs),
 				MarketingCampaigns: marketingCampaignsToAny(td.marketingCampaigns),
 				CalendarFlags:      flagsInput,
@@ -737,39 +893,45 @@ func parseBoardConfig(meta sql.NullString) boardConfigMeta {
 	return bc
 }
 
-// filterBoardItems applies team-area and sprint filters to a slice of board items.
-// Filtering only occurs when the relevant config fields are non-empty.
-func filterBoardItems(items []githubconn.BoardItem, cfg boardConfigMeta, now time.Time) []githubconn.BoardItem {
-	if cfg.TeamAreaValue == "" && cfg.SprintField == "" {
+// applyAreaFilter keeps only items whose TeamArea matches the configured value.
+// If no TeamAreaValue is configured, all items pass through.
+func applyAreaFilter(items []githubconn.BoardItem, cfg boardConfigMeta) []githubconn.BoardItem {
+	if cfg.TeamAreaValue == "" {
 		return items
 	}
 	result := items[:0:0]
 	for _, bi := range items {
-		// Team/Area filter: keep only items whose TeamArea matches the configured value.
-		if cfg.TeamAreaValue != "" && bi.TeamArea != cfg.TeamAreaValue {
+		if bi.TeamArea == cfg.TeamAreaValue {
+			result = append(result, bi)
+		}
+	}
+	return result
+}
+
+// applySprintFilter keeps only items whose sprint window includes now.
+// Items with no sprint assigned are excluded when SprintField is configured.
+// If SprintField is empty, all items pass through unchanged.
+func applySprintFilter(items []githubconn.BoardItem, cfg boardConfigMeta, now time.Time) []githubconn.BoardItem {
+	if cfg.SprintField == "" {
+		return items
+	}
+	result := items[:0:0]
+	for _, bi := range items {
+		if bi.SprintStart == "" {
 			continue
 		}
-		// Sprint filter: keep only items in the currently active sprint.
-		// The sprint field name is used as a signal that sprint filtering is desired;
-		// items with no sprint set, or whose sprint window does not include today, are excluded.
-		if cfg.SprintField != "" {
-			if bi.SprintStart == "" {
-				continue // no sprint assigned
-			}
-			start, err := time.Parse("2006-01-02", bi.SprintStart)
-			if err != nil {
-				continue
-			}
-			days := bi.SprintDays
-			if days <= 0 {
-				days = 14 // default to two-week sprint if duration missing
-			}
-			end := start.AddDate(0, 0, days)
-			if now.Before(start) || now.After(end) {
-				continue // outside sprint window
-			}
+		start, err := time.Parse("2006-01-02", bi.SprintStart)
+		if err != nil {
+			continue
 		}
-		result = append(result, bi)
+		days := bi.SprintDays
+		if days <= 0 {
+			days = 14
+		}
+		end := start.AddDate(0, 0, days)
+		if !now.Before(start) && !now.After(end) {
+			result = append(result, bi)
+		}
 	}
 	return result
 }
@@ -812,7 +974,9 @@ func parseJSONMeta(meta sql.NullString) map[string]any {
 }
 
 // boardItemsToAny converts []githubconn.BoardItem to []any with key fields for pipeline prompts.
-func boardItemsToAny(items []githubconn.BoardItem) []any {
+// Sprint context ("past", "current", "future") is computed relative to now so the model
+// can distinguish items from different sprints across the whole plan.
+func boardItemsToAny(items []githubconn.BoardItem, now time.Time) []any {
 	result := make([]any, len(items))
 	for i, bi := range items {
 		m := map[string]any{
@@ -823,6 +987,26 @@ func boardItemsToAny(items []githubconn.BoardItem) []any {
 		}
 		if bi.Status != "" {
 			m["project_status"] = bi.Status
+		}
+		if bi.Sprint != "" {
+			m["sprint"] = bi.Sprint
+			if bi.SprintStart != "" {
+				if start, err := time.Parse("2006-01-02", bi.SprintStart); err == nil {
+					days := bi.SprintDays
+					if days <= 0 {
+						days = 14
+					}
+					end := start.AddDate(0, 0, days)
+					switch {
+					case now.Before(start):
+						m["sprint_context"] = "future"
+					case now.After(end):
+						m["sprint_context"] = "past"
+					default:
+						m["sprint_context"] = "current"
+					}
+				}
+			}
 		}
 		result[i] = m
 	}

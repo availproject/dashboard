@@ -64,16 +64,103 @@ func (c *Client) FetchProjectLabels(ctx context.Context, dbID string) ([]string,
 	return labels, nil
 }
 
-// FetchMarketingCampaigns queries the marketing calendar database for campaigns
-// matching projectLabel with status "In Progress" or "Not Started".
-// For each campaign, linked task pages are fetched individually.
-// Note: relation properties with >100 items are not paginated (practically never occurs for campaigns).
-func (c *Client) FetchMarketingCampaigns(ctx context.Context, dbID, projectLabel string) ([]MarketingCampaign, error) {
+// CampaignMeta holds campaign-level data from the marketing calendar DB query,
+// including the IDs of related task pages (but not the task page content).
+type CampaignMeta struct {
+	PageID    string
+	Title     string
+	Status    string
+	DateStart *time.Time
+	DateEnd   *time.Time
+	TaskIDs   []string // Notion page IDs of related task pages
+}
+
+// FetchMarketingCampaignsMeta queries the marketing calendar DB and returns
+// campaign metadata (including task page IDs) without fetching the task pages.
+// This is the fast first step; task pages should then be fetched in parallel.
+func (c *Client) FetchMarketingCampaignsMeta(ctx context.Context, dbID, projectLabel string) ([]CampaignMeta, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
 	}
 
-	filter := notion.AndCompoundFilter{
+	filter := buildMarketingFilter(projectLabel)
+
+	var metas []CampaignMeta
+	var cursor notion.Cursor
+	for {
+		req := &notion.DatabaseQueryRequest{Filter: filter, PageSize: 100}
+		if cursor != "" {
+			req.StartCursor = cursor
+		}
+		resp, err := c.nc.Database.Query(ctx, notion.DatabaseID(dbID), req)
+		if err != nil {
+			return nil, fmt.Errorf("notion: query marketing DB %s: %w", dbID, err)
+		}
+		for _, page := range resp.Results {
+			m := CampaignMeta{
+				PageID:  page.ID.String(),
+				Title:   extractPageTitle(&page),
+				Status:  extractStatusOrSelect(page.Properties, mktPropStatus),
+				TaskIDs: extractRelationIDs(&page, mktPropTasks),
+			}
+			if dp, ok := page.Properties[mktPropDate].(*notion.DateProperty); ok && dp.Date != nil {
+				if dp.Date.Start != nil {
+					t := time.Time(*dp.Date.Start)
+					m.DateStart = &t
+				}
+				if dp.Date.End != nil {
+					t := time.Time(*dp.Date.End)
+					m.DateEnd = &t
+				}
+			}
+			metas = append(metas, m)
+		}
+		if !resp.HasMore {
+			break
+		}
+		cursor = resp.NextCursor
+	}
+	return metas, nil
+}
+
+// FetchMarketingTaskCached fetches a marketing task page's properties and
+// (conditionally) its block content. It always calls Page.Get to read current
+// properties and last-edited time; it only calls fetchBlocksText when the page
+// has changed since knownLastEdited (pass "" to always fetch).
+//
+// Returns (task, lastEdited, changed, err). When changed=false the returned
+// task has Title/Status/Assignee populated but Body is empty — the caller
+// should supply Body from its own cache.
+func (c *Client) FetchMarketingTaskCached(ctx context.Context, pageID, knownLastEdited string) (MarketingTask, string, bool, error) {
+	page, err := c.nc.Page.Get(ctx, notion.PageID(pageID))
+	if err != nil {
+		return MarketingTask{}, "", false, fmt.Errorf("notion: get task page %s: %w", pageID, err)
+	}
+
+	lastEdited := page.LastEditedTime.UTC().Format(time.RFC3339)
+	task := MarketingTask{
+		PageID:   pageID,
+		Title:    extractPageTitle(page),
+		Status:   extractStatusOrSelect(page.Properties, "Status", "Task Status", "State", "Stage", "Progress"),
+		Assignee: extractPeopleProperty(page.Properties, "Owner", "Assignee", "Assigned To", "BD / Product Rep", "Person", "DRI", "Team"),
+	}
+
+	if knownLastEdited != "" && lastEdited == knownLastEdited {
+		// Page unchanged — caller should use cached body.
+		return task, lastEdited, false, nil
+	}
+
+	body, _ := c.fetchBlocksText(ctx, notion.BlockID(pageID), 0)
+	if len(body) > 500 {
+		body = body[:500]
+	}
+	task.Body = body
+	return task, lastEdited, true, nil
+}
+
+// buildMarketingFilter builds the Notion filter for active campaigns of a given project label.
+func buildMarketingFilter(projectLabel string) notion.Filter {
+	return notion.AndCompoundFilter{
 		notion.OrCompoundFilter{
 			notion.PropertyFilter{
 				Property: mktPropStatus,
@@ -89,6 +176,18 @@ func (c *Client) FetchMarketingCampaigns(ctx context.Context, dbID, projectLabel
 			Select:   &notion.SelectFilterCondition{Equals: projectLabel},
 		},
 	}
+}
+
+// FetchMarketingCampaigns queries the marketing calendar database for campaigns
+// matching projectLabel with status "In Progress" or "Not Started".
+// For each campaign, linked task pages are fetched individually.
+// Note: relation properties with >100 items are not paginated (practically never occurs for campaigns).
+func (c *Client) FetchMarketingCampaigns(ctx context.Context, dbID, projectLabel string) ([]MarketingCampaign, error) {
+	if err := c.checkToken(); err != nil {
+		return nil, err
+	}
+
+	filter := buildMarketingFilter(projectLabel)
 
 	var campaigns []MarketingCampaign
 	var cursor notion.Cursor

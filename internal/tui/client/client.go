@@ -469,10 +469,25 @@ type CalendarResponse struct {
 
 // SyncRunResponse is returned by GetSyncRun.
 type SyncRunResponse struct {
-	ID     int64   `json:"ID"`
-	Status string  `json:"Status"`
-	Scope  string  `json:"Scope"`
-	Error  *string `json:"Error"`
+	ID      int64            `json:"ID"`
+	Status  string           `json:"Status"`
+	Scope   string           `json:"Scope"`
+	Error   *string          `json:"Error"`
+	Timings map[string]int64 `json:"Timings,omitempty"`
+}
+
+// SyncRunListItem is a single entry in the list returned by ListSyncRuns.
+type SyncRunListItem struct {
+	ID         int64            `json:"ID"`
+	Scope      string           `json:"Scope"`
+	TeamID     *int64           `json:"TeamID,omitempty"`
+	TeamName   *string          `json:"TeamName,omitempty"`
+	Status     string           `json:"Status"`
+	Error      *string          `json:"Error,omitempty"`
+	StartedAt  string           `json:"StartedAt"`
+	FinishedAt *string          `json:"FinishedAt,omitempty"`
+	DurationMs *int64           `json:"DurationMs,omitempty"`
+	Timings    map[string]int64 `json:"Timings,omitempty"`
 }
 
 // AnnotationResponse is returned by PostAnnotation.
@@ -787,6 +802,19 @@ func (c *Client) GetSyncRun(runID int64) (*SyncRunResponse, error) {
 	}
 	var result SyncRunResponse
 	return &result, decodeJSON(resp, &result)
+}
+
+// ListSyncRuns returns the most recent sync runs.
+func (c *Client) ListSyncRuns() ([]SyncRunListItem, error) {
+	resp, err := c.doRequest("GET", c.serverAddr+"/sync", nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result []SyncRunListItem
+	return result, decodeJSON(resp, &result)
 }
 
 // PostAnnotation creates a new annotation.

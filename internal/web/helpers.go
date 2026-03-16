@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // riskClass maps a risk level string to a CSS class.
@@ -97,6 +98,50 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(runes[:n-1]) + "…"
+}
+
+// sprintDayBar returns a Mon–Fri bar with today highlighted yellow, past days cyan, future dim.
+func sprintDayBar() template.HTML {
+	wd := int(time.Now().Weekday()) // Sun=0, Mon=1…Fri=5, Sat=6
+	if wd == 0 || wd > 5 {
+		wd = 5
+	}
+	var sb strings.Builder
+	sb.WriteString(`<span class="sprint-day-bar">[`)
+	for i := 1; i <= 5; i++ {
+		switch {
+		case i == wd:
+			sb.WriteString(`<span class="sprint-day-today">█</span>`)
+		case i < wd:
+			sb.WriteString(`<span class="sprint-day-past">█</span>`)
+		default:
+			sb.WriteString(`<span class="sprint-day-future">░</span>`)
+		}
+	}
+	sb.WriteString(`]</span>`)
+	return template.HTML(sb.String())
+}
+
+// sprintPips returns ●/◉/○ pips for sprint position within a plan.
+func sprintPips(current, total int) template.HTML {
+	if total <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i := 1; i <= total; i++ {
+		if i > 1 {
+			sb.WriteString(` `)
+		}
+		switch {
+		case i < current:
+			sb.WriteString(`<span class="sprint-pip-past">●</span>`)
+		case i == current:
+			sb.WriteString(`<span class="sprint-pip-current">◉</span>`)
+		default:
+			sb.WriteString(`<span class="sprint-pip-future">○</span>`)
+		}
+	}
+	return template.HTML(sb.String())
 }
 
 // sprintBar returns an HTML snippet of filled/empty blocks for sprint position.
