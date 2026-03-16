@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">Dashboard</div>
+      {{if .Error}}
+      <div class="flash flash-error">{{.Error}}</div>
+      {{end}}
+      <form method="post" action="/login" class="login-form">
+        {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" type="text" name="username" autocomplete="username" autofocus required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full">Sign in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

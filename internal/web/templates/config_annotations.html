@@ -1,0 +1,172 @@
+{{define "title"}}Annotations — Dashboard{{end}}
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1 class="page-title">Annotations</h1>
+  </div>
+  <div class="page-header-right">
+    <a href="/config" class="btn btn-ghost">← Config</a>
+  </div>
+</div>
+
+{{if .Error}}
+<div class="flash flash-error">{{.Error}}</div>
+{{end}}
+
+<section class="section">
+  <div class="section-header-row">
+    <h2 class="section-title">Team Annotations <span class="muted small">(persist across sprints)</span></h2>
+  </div>
+
+  {{if .IsEdit}}
+  <div class="card mb">
+    <form hx-post="/config/annotations"
+          hx-target="body"
+          hx-push-url="true"
+          class="stack-form">
+      <input type="hidden" name="tier" value="team">
+      <div class="form-row">
+        <select name="team_id" class="input-sm">
+          <option value="">— all teams —</option>
+          {{range .Teams}}
+          <option value="{{.ID}}">{{.Name}}</option>
+          {{end}}
+        </select>
+        <input type="text" name="item_ref" placeholder="Section key (optional, e.g. goals)" class="input-sm">
+      </div>
+      <textarea name="content" placeholder="Annotation content…" class="textarea" rows="2" required></textarea>
+      <button type="submit" class="btn btn-primary">Add Team Annotation</button>
+    </form>
+  </div>
+  {{end}}
+
+  <div class="card">
+    {{if .Annotations.Team}}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Content</th>
+          <th>Team</th>
+          <th>Section</th>
+          <th>Updated</th>
+          {{if $.IsEdit}}<th></th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Annotations.Team}}
+        <tr id="ann-cfg-{{.ID}}">
+          <td>
+            <div id="ann-cfg-content-{{.ID}}">{{.Content}}</div>
+          </td>
+          <td class="muted small">
+            {{if .TeamID}}team:{{.TeamID}}{{else}}all{{end}}
+          </td>
+          <td class="mono muted small">{{if .ItemRef}}{{deref .ItemRef}}{{else}}—{{end}}</td>
+          <td class="muted small">{{.UpdatedAt}}</td>
+          {{if $.IsEdit}}
+          <td class="row-actions">
+            <button class="btn btn-sm btn-ghost" onclick="toggleEditAnn({{.ID}})">Edit</button>
+            <button class="btn btn-sm btn-ghost btn-danger"
+                    hx-delete="/config/annotations/{{.ID}}"
+                    hx-target="body"
+                    hx-push-url="true"
+                    hx-confirm="Delete this annotation?">Delete</button>
+          </td>
+          {{end}}
+        </tr>
+        {{if $.IsEdit}}
+        <tr id="edit-ann-{{.ID}}" class="hidden">
+          <td colspan="5">
+            <form hx-put="/config/annotations/{{.ID}}"
+                  hx-target="body"
+                  hx-push-url="true"
+                  class="inline-form">
+              <textarea name="content" class="textarea" rows="2" required>{{.Content}}</textarea>
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              <button type="button" class="btn btn-sm btn-ghost" onclick="toggleEditAnn({{.ID}})">Cancel</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty-state">No team annotations yet.</div>
+    {{end}}
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-header-row">
+    <h2 class="section-title">Item Annotations <span class="muted small">(auto-archived at sprint rollover)</span></h2>
+  </div>
+
+  {{if .IsEdit}}
+  <div class="card mb">
+    <form hx-post="/config/annotations"
+          hx-target="body"
+          hx-push-url="true"
+          class="stack-form">
+      <input type="hidden" name="tier" value="item">
+      <div class="form-row">
+        <select name="team_id" class="input-sm">
+          <option value="">— all teams —</option>
+          {{range .Teams}}
+          <option value="{{.ID}}">{{.Name}}</option>
+          {{end}}
+        </select>
+        <input type="text" name="item_ref" placeholder="Item ref / section key" class="input-sm">
+      </div>
+      <textarea name="content" placeholder="Annotation content…" class="textarea" rows="2" required></textarea>
+      <button type="submit" class="btn btn-primary">Add Item Annotation</button>
+    </form>
+  </div>
+  {{end}}
+
+  <div class="card">
+    {{if .Annotations.Item}}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Content</th>
+          <th>Team</th>
+          <th>Item Ref</th>
+          <th>Archived</th>
+          <th>Updated</th>
+          {{if $.IsEdit}}<th></th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Annotations.Item}}
+        <tr id="ann-cfg-item-{{.ID}}">
+          <td>{{.Content}}</td>
+          <td class="muted small">{{if .TeamID}}team:{{.TeamID}}{{else}}all{{end}}</td>
+          <td class="mono muted small">{{if .ItemRef}}{{deref .ItemRef}}{{else}}—{{end}}</td>
+          <td>{{if .Archived}}<span class="badge badge-muted">archived</span>{{else}}<span class="badge badge-green">active</span>{{end}}</td>
+          <td class="muted small">{{.UpdatedAt}}</td>
+          {{if $.IsEdit}}
+          <td class="row-actions">
+            <button class="btn btn-sm btn-ghost btn-danger"
+                    hx-delete="/config/annotations/{{.ID}}"
+                    hx-target="body"
+                    hx-push-url="true"
+                    hx-confirm="Delete this annotation?">Delete</button>
+          </td>
+          {{end}}
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty-state">No item annotations yet.</div>
+    {{end}}
+  </div>
+</section>
+
+<script>
+function toggleEditAnn(id) {
+  document.getElementById('edit-ann-' + id).classList.toggle('hidden');
+}
+</script>
+{{end}}

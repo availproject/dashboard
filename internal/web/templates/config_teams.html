@@ -1,0 +1,145 @@
+{{define "title"}}Teams — Dashboard{{end}}
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1 class="page-title">Teams</h1>
+  </div>
+  <div class="page-header-right">
+    <a href="/config" class="btn btn-ghost">← Config</a>
+  </div>
+</div>
+
+{{if .Error}}
+<div class="flash flash-error">{{.Error}}</div>
+{{end}}
+
+{{if .IsEdit}}
+<div class="card mb">
+  <h2 class="card-title">Add Team</h2>
+  <form hx-post="/config/teams"
+        hx-target="body"
+        hx-push-url="true"
+        class="inline-form">
+    <input type="text" name="name" placeholder="Team name" class="input" required>
+    <button type="submit" class="btn btn-primary">Create</button>
+  </form>
+</div>
+{{end}}
+
+{{range .Teams}}
+<details class="section-card" open>
+  <summary class="section-card-title">
+    <span>{{.Name}}</span>
+    {{if .MarketingLabel}}<span class="badge badge-muted">{{deref .MarketingLabel}}</span>{{end}}
+    {{if $.IsEdit}}
+    <div class="summary-actions" onclick="event.stopPropagation()">
+      <button class="btn btn-sm btn-ghost"
+              onclick="toggleEditTeam({{.ID}})">Rename</button>
+      <button class="btn btn-sm btn-ghost btn-danger"
+              hx-delete="/config/teams/{{.ID}}"
+              hx-target="body"
+              hx-push-url="true"
+              hx-confirm="Delete team {{.Name}} and all its data?">Delete</button>
+    </div>
+    {{end}}
+  </summary>
+  <div class="section-card-body">
+
+    {{if $.IsEdit}}
+    <div id="edit-team-{{.ID}}" class="hidden">
+      <form hx-put="/config/teams/{{.ID}}"
+            hx-target="body"
+            hx-push-url="true"
+            class="inline-form mb">
+        <input type="text" name="name" value="{{.Name}}" class="input" required>
+        <button type="submit" class="btn btn-primary">Save</button>
+        <button type="button" class="btn btn-ghost" onclick="toggleEditTeam({{.ID}})">Cancel</button>
+      </form>
+    </div>
+    {{end}}
+
+    <h3 class="subsection-title">Members</h3>
+    {{if .Members}}
+    <table class="table table-sm mb">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>GitHub</th>
+          <th>Notion</th>
+          {{if $.IsEdit}}<th></th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Members}}
+        <tr id="member-row-{{.ID}}">
+          <td>{{.DisplayName}}</td>
+          <td class="mono muted small">{{if .GithubUsername}}{{deref .GithubUsername}}{{else}}—{{end}}</td>
+          <td class="mono muted small">{{if .NotionUserID}}{{deref .NotionUserID}}{{else}}—{{end}}</td>
+          {{if $.IsEdit}}
+          <td class="row-actions">
+            <button class="btn btn-sm btn-ghost" onclick="toggleEditMember({{.ID}})">Edit</button>
+            <button class="btn btn-sm btn-ghost btn-danger"
+                    hx-delete="/config/members/{{.ID}}"
+                    hx-target="body"
+                    hx-push-url="true"
+                    hx-confirm="Remove {{.DisplayName}}?">Remove</button>
+          </td>
+          {{end}}
+        </tr>
+        {{if $.IsEdit}}
+        <tr id="edit-member-{{.ID}}" class="hidden">
+          <td colspan="4">
+            <form hx-put="/config/members/{{.ID}}"
+                  hx-target="body"
+                  hx-push-url="true"
+                  class="inline-form">
+              <input type="text" name="display_name" value="{{.DisplayName}}" placeholder="Name" class="input-sm" required>
+              <input type="text" name="github_username" value="{{if .GithubUsername}}{{deref .GithubUsername}}{{end}}" placeholder="GitHub username" class="input-sm">
+              <input type="text" name="notion_user_id" value="{{if .NotionUserID}}{{deref .NotionUserID}}{{end}}" placeholder="Notion user ID" class="input-sm">
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              <button type="button" class="btn btn-sm btn-ghost" onclick="toggleEditMember({{.ID}})">Cancel</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="muted small mb">No members yet.</div>
+    {{end}}
+
+    {{if $.IsEdit}}
+    <details class="add-member-wrap">
+      <summary class="btn btn-sm btn-ghost">+ Add Member</summary>
+      <div class="add-member-form card-inset">
+        <form hx-post="/config/teams/{{.ID}}/members"
+              hx-target="body"
+              hx-push-url="true"
+              class="stack-form">
+          <input type="text" name="display_name" placeholder="Display name" class="input" required>
+          <input type="text" name="github_username" placeholder="GitHub username (optional)" class="input">
+          <input type="text" name="notion_user_id" placeholder="Notion user ID (optional)" class="input">
+          <button type="submit" class="btn btn-primary">Add Member</button>
+        </form>
+      </div>
+    </details>
+    {{end}}
+
+  </div>
+</details>
+{{else}}
+<div class="card empty-state">No teams yet. Create one above.</div>
+{{end}}
+
+<script>
+function toggleEditTeam(id) {
+  var el = document.getElementById('edit-team-' + id);
+  el.classList.toggle('hidden');
+}
+function toggleEditMember(id) {
+  var el = document.getElementById('edit-member-' + id);
+  el.classList.toggle('hidden');
+}
+</script>
+{{end}}

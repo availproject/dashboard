@@ -1,0 +1,23 @@
+{{define "sync_status.html"}}
+{{if .Polling}}
+<div id="sync-status-{{.RunID}}"
+     hx-get="/sync/{{.RunID}}/status"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML"
+     class="sync-status sync-status-running">
+  <span class="sync-spinner">⟳</span> Syncing…
+</div>
+{{else if .Error}}
+<div id="sync-status-{{.RunID}}" class="sync-status sync-status-error">
+  ✗ Sync error: {{.Error}}
+</div>
+{{else if eq .Status "done"}}
+<div id="sync-status-{{.RunID}}" class="sync-status sync-status-done">
+  ✓ Sync complete — <a href="{{if .TeamID}}/teams/{{.TeamID}}{{else}}/{{end}}">reload</a>
+</div>
+{{else}}
+<div id="sync-status-{{.RunID}}" class="sync-status sync-status-running">
+  <span class="sync-spinner">⟳</span> {{.Status}}…
+</div>
+{{end}}
+{{end}}

@@ -15,7 +15,6 @@ type slotSavedMsg struct{ err error }
 // slotCompatibleTypes maps purpose → acceptable source types for the picker.
 var slotCompatibleTypes = map[string][]string{
 	"goals_doc":          {"notion_page", "notion_db", "github_file"},
-	"task_label":         {"github_label"},
 	"marketing_calendar": {"notion_db"},
 }
 

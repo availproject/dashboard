@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -64,10 +65,11 @@ func (d *Deps) handleGetSyncRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := struct {
-		ID     int64   `json:"ID"`
-		Status string  `json:"Status"`
-		Scope  string  `json:"Scope"`
-		Error  *string `json:"Error"`
+		ID      int64              `json:"ID"`
+		Status  string             `json:"Status"`
+		Scope   string             `json:"Scope"`
+		Error   *string            `json:"Error"`
+		Timings map[string]int64   `json:"Timings,omitempty"`
 	}{
 		ID:     run.ID,
 		Status: run.Status,
@@ -75,6 +77,12 @@ func (d *Deps) handleGetSyncRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if run.Error.Valid {
 		resp.Error = &run.Error.String
+	}
+	if run.Timings.Valid && run.Timings.String != "" {
+		var t map[string]int64
+		if err := json.Unmarshal([]byte(run.Timings.String), &t); err == nil {
+			resp.Timings = t
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

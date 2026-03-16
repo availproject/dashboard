@@ -205,6 +205,16 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 		}
 
 		// Configure the project board itself.
+		// Check for existing manual/configured boards — if present, skip AI configuration
+		// so the user's explicit choice is never overridden.
+		existingBoardConfigs, _ := e.store.GetConfigsByPurpose(ctx, nullTeamID, "github_project")
+		hasManualBoard := false
+		for _, ec := range existingBoardConfigs {
+			if ec.Provenance == "manual" || ec.Provenance == "configured" {
+				hasManualBoard = true
+				break
+			}
+		}
 		for _, di := range discovered {
 			if di.SourceType != "github_project" {
 				continue
@@ -212,6 +222,17 @@ func (e *Engine) homepageExtractBackground(runID int64, teamID int64) {
 			catID := catalogueIDs["github_project\x00"+di.ExternalID]
 			if catID == 0 {
 				continue
+			}
+			if hasManualBoard {
+				log.Printf("INFO  homepage_extract [run %d team %d]: skipping github_project catalogue id %d (manual board already set)", runID, teamID, catID)
+				continue
+			}
+			// Remove any stale ai_extracted board configs pointing to a different catalogue item.
+			for _, ec := range existingBoardConfigs {
+				if ec.Provenance == "ai_extracted" && ec.CatalogueID != catID {
+					log.Printf("INFO  homepage_extract [run %d team %d]: replacing stale ai_extracted github_project config %d", runID, teamID, ec.ID)
+					_ = e.store.DeleteSourceConfig(ctx, ec.ID)
+				}
 			}
 			log.Printf("INFO  homepage_extract [run %d team %d]: github_project → catalogue id %d", runID, teamID, catID)
 			_, _ = e.store.UpsertSourceConfig(ctx, catID, nullTeamID, "github_project",

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/your-org/dashboard/internal/ai"
 	"github.com/your-org/dashboard/internal/api"
 	"github.com/your-org/dashboard/internal/auth"
@@ -26,6 +27,7 @@ import (
 	"github.com/your-org/dashboard/internal/pipeline"
 	enginesync "github.com/your-org/dashboard/internal/sync"
 	"github.com/your-org/dashboard/internal/store"
+	"github.com/your-org/dashboard/internal/web"
 )
 
 func main() {
@@ -124,33 +126,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// WaitGroup to track in-progress background goroutines (autotag ticker, HTTP server).
+	// WaitGroup to track in-progress background goroutines (HTTP server).
 	var wg sync.WaitGroup
 
-	// AutoTag ticker: runs every hour.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := engine.AutoTag(ctx); err != nil {
-					log.Printf("autotag: %v", err)
-				}
-			}
-		}
-	}()
+	// Build combined router: API at /api/, web UI at /.
+	apiBase := fmt.Sprintf("http://localhost:%d/api", cfg.Server.Port)
+	webDeps := &web.Deps{
+		JWTSecret: cfg.Auth.JWTSecret,
+		APIBase:   apiBase,
+	}
 
-	// HTTP server with graceful shutdown.
-	router := api.NewRouter(deps)
+	root := chi.NewRouter()
+	root.Mount("/api", api.NewRouter(deps))
+	root.Mount("/", web.NewRouter(webDeps))
+
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: router,
+		Handler: root,
 	}
 
 	// Start server in background.

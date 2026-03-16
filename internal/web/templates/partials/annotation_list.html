@@ -1,0 +1,16 @@
+{{define "annotation_list.html"}}
+<div id="ann-{{.Section}}-{{.TeamID}}">
+  {{range .Annotations}}
+  <div class="ann-item" id="ann-{{.ID}}">
+    <span class="ann-content">{{.Content}}</span>
+    {{if $.IsEdit}}
+    <button class="btn-icon muted"
+            hx-delete="/annotations/{{.ID}}"
+            hx-target="#ann-{{.ID}}"
+            hx-swap="outerHTML"
+            hx-confirm="Delete this note?">✕</button>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

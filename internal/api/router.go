@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/your-org/dashboard/internal/config"
+	githubconn "github.com/your-org/dashboard/internal/connector/github"
 	"github.com/your-org/dashboard/internal/store"
 )
 
@@ -15,9 +16,9 @@ type SyncEngine interface {
 	Sync(ctx context.Context, scope string, teamID *int64) (int64, error)
 	Discover(ctx context.Context, scope, target string) (int64, error)
 	Classify(ctx context.Context, itemIDs []int64) (int64, error)
-	AutoTag(ctx context.Context) error
 	HomepageExtract(ctx context.Context, teamID int64) (int64, error)
 	GetMarketingLabels(ctx context.Context, teamID int64) ([]string, error)
+	GetBoardFields(ctx context.Context, teamID int64) ([]githubconn.ProjectField, error)
 }
 
 // PipelineRunner is the interface the API layer uses to invoke pipelines.
@@ -61,6 +62,7 @@ func NewRouter(deps *Deps) http.Handler {
 		r.Get("/teams/{id}/calendar", deps.handleGetTeamCalendar)
 		r.Get("/teams/{id}/config", deps.handleGetTeamConfig)
 		r.Get("/teams/{id}/marketing-labels", deps.handleGetMarketingLabels)
+		r.Get("/teams/{id}/board-fields", deps.handleGetBoardFields)
 		r.Get("/sync/{run_id}", deps.handleGetSyncRun)
 		r.Get("/config/sources", deps.handleListSources)
 		r.Get("/config/annotations", deps.handleListConfigAnnotations)
@@ -99,7 +101,6 @@ func NewRouter(deps *Deps) http.Handler {
 			r.Put("/annotations/{id}", deps.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", deps.handleDeleteAnnotation)
 
-			r.Get("/admin/autotag", deps.handleAdminAutotag)
 			r.Delete("/admin/ai-cache", deps.handleAdminClearAICache)
 		})
 	})

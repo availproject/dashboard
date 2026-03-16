@@ -1,0 +1,20 @@
+{{define "annotation_form.html"}}
+<div class="ann-form-wrap" id="ann-form-inline-{{.TeamID}}-{{.Section}}">
+  <form hx-post="/annotations"
+        hx-target="#ann-form-inline-{{.TeamID}}-{{.Section}}"
+        hx-swap="outerHTML"
+        class="ann-form">
+    <input type="hidden" name="team_id" value="{{.TeamID}}">
+    <input type="hidden" name="section" value="{{.Section}}">
+    <input type="hidden" name="tier" value="team">
+    <textarea name="content" class="textarea ann-textarea" rows="2" placeholder="Add a note…" autofocus required></textarea>
+    <div class="ann-form-actions">
+      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+      <button type="button" class="btn btn-sm btn-ghost"
+              hx-get="/teams/0/annotations/form?section=cancel"
+              hx-target="#ann-form-inline-{{.TeamID}}-{{.Section}}"
+              hx-swap="outerHTML">Cancel</button>
+    </div>
+  </form>
+</div>
+{{end}}

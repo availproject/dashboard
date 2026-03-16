@@ -1,0 +1,180 @@
+{{define "title"}}Org Overview — Dashboard{{end}}
+
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1 class="page-title">Org Overview</h1>
+    {{if .Overview.LastSyncedAt}}
+    <span class="muted">synced {{deref .Overview.LastSyncedAt}}</span>
+    {{end}}
+  </div>
+  <div class="page-header-right">
+    {{if .IsEdit}}
+    <div id="org-sync-status">
+      <button class="btn btn-primary"
+              hx-post="/sync"
+              hx-target="#org-sync-status"
+              hx-swap="outerHTML">Sync Org</button>
+    </div>
+    {{end}}
+  </div>
+</div>
+
+{{if .Overview}}
+
+{{/* ── Team Cards ─────────────────────────────────────────────────────────── */}}
+<div class="team-grid">
+  {{range .Overview.Teams}}
+  <a href="/teams/{{.ID}}" class="team-card">
+    <div class="team-card-header">
+      <span class="team-card-name">{{.Name}}</span>
+      {{if .RiskLevel}}<span class="badge {{riskClass .RiskLevel}}">{{.RiskLevel}}</span>{{end}}
+    </div>
+    <div class="team-card-sprint">
+      <span class="mono">
+        {{if gt .TotalSprints 0}}
+          Week {{.CurrentSprint}} / {{.TotalSprints}}
+        {{else}}
+          No sprint data
+        {{end}}
+      </span>
+    </div>
+    {{if .Focus}}
+    <div class="team-card-focus muted">{{truncate .Focus 120}}</div>
+    {{end}}
+    {{if .LastSyncedAt}}
+    <div class="team-card-synced muted small">synced {{deref .LastSyncedAt}}</div>
+    {{end}}
+  </a>
+  {{else}}
+  <div class="empty-state">No teams yet. Add teams in <a href="/config/teams">Config → Teams</a>.</div>
+  {{end}}
+</div>
+
+{{/* ── Cross-Team Workload ─────────────────────────────────────────────────── */}}
+{{if .Overview.Workload}}
+<section class="section">
+  <h2 class="section-title">Cross-Team Workload</h2>
+  <div class="card">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Member</th>
+          <th class="num">Est. Days</th>
+          <th>Load</th>
+          <th>Breakdown</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Overview.Workload}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td class="num mono">{{printf "%.1f" .TotalDays}}</td>
+          <td><span class="badge {{workloadClass .Label}}">{{.Label}}</span></td>
+          <td class="muted small">
+            {{range $team, $days := .Breakdown}}{{$team}}: {{printf "%.1f" $days}}d &nbsp;{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
+
+{{/* ── Goal Alignment ──────────────────────────────────────────────────────── */}}
+{{if .Overview.GoalAlignment}}
+<section class="section">
+  <h2 class="section-title">Goal Alignment</h2>
+  <div class="card">
+    {{if .Overview.GoalAlignment.Summary}}
+    <p class="alignment-summary">{{.Overview.GoalAlignment.Summary}}</p>
+    {{end}}
+    {{if .Overview.GoalAlignment.Goals}}
+    <ul class="goal-list">
+      {{range .Overview.GoalAlignment.Goals}}
+      <li class="goal-item">
+        <span class="status-icon {{statusClass .Status}}">{{statusIcon .Status}}</span>
+        <span>{{.Text}}</span>
+      </li>
+      {{end}}
+    </ul>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{/* ── Calendar ────────────────────────────────────────────────────────────── */}}
+<section class="section">
+  <div class="section-header-row">
+    <h2 class="section-title">Calendar</h2>
+    <div class="cal-nav">
+      <a href="/?mo={{.CalPrev}}" class="btn btn-sm btn-ghost">◀</a>
+      <a href="/?mo={{.CalNext}}" class="btn btn-sm btn-ghost">▶</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="cal-months">
+      {{range .Months}}
+      <div class="cal-month">
+        <div class="cal-month-label">{{.Label}}</div>
+        <table class="cal-grid">
+          <thead>
+            <tr>
+              <th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Weeks}}
+            <tr>
+              {{range .Days}}
+              {{if .}}
+              <td class="cal-day{{if .IsToday}} cal-today{{end}}{{if .Events}} cal-has-event{{end}}">
+                <span class="cal-daynum">{{.Day}}</span>
+                {{if .Events}}<span class="cal-dot"></span>{{end}}
+              </td>
+              {{else}}
+              <td class="cal-day cal-day-empty"></td>
+              {{end}}
+              {{end}}
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+    </div>
+
+    {{/* Event list */}}
+    {{if .Calendar.Events}}
+    <div class="cal-events">
+      {{range .Calendar.Events}}
+      <div class="cal-event-row">
+        <span class="cal-event-date mono muted">{{.Date}}</span>
+        <span class="cal-event-team muted">{{.TeamName}}</span>
+        <span class="cal-event-title">{{.Title}}</span>
+        {{if .HasFlags}}<span class="badge badge-amber">⚠</span>{{end}}
+        {{if eq .DateConfidence "inferred"}}<span class="muted small">~inferred</span>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if .Calendar.Undated}}
+    <div class="cal-undated">
+      <div class="muted small">Needs a date:</div>
+      {{range .Calendar.Undated}}
+      <div class="cal-event-row">
+        <span class="cal-event-team muted">{{.TeamName}}</span>
+        <span class="cal-event-title">{{.Title}}</span>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+</section>
+
+{{else}}
+<div class="empty-state">No data yet. <a href="/config/teams">Configure teams</a> and sync.</div>
+{{end}}
+{{end}}

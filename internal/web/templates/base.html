@@ -1,0 +1,31 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{block "title" .}}Dashboard{{end}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/" class="topnav-brand">Dashboard</a>
+    <div class="topnav-teams">
+      {{range .Teams}}
+      <a href="/teams/{{.ID}}" class="topnav-team{{if eq $.ActiveTeamID .ID}} active{{end}}">{{.Name}}</a>
+      {{end}}
+    </div>
+    <div class="topnav-right">
+      <a href="/config" class="topnav-link">Config</a>
+      <span class="topnav-user">{{.Username}}</span>
+      <form method="post" action="/logout" class="topnav-logout">
+        <button type="submit" class="btn-ghost">Logout</button>
+      </form>
+    </div>
+  </nav>
+  <main class="main">
+    {{block "content" .}}{{end}}
+  </main>
+  <script src="/static/htmx.min.js"></script>
+</body>
+</html>
+{{end}}

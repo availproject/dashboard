@@ -1,0 +1,148 @@
+{{define "title"}}Sources — Dashboard{{end}}
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1 class="page-title">Sources</h1>
+  </div>
+  <div class="page-header-right">
+    <a href="/config" class="btn btn-ghost">← Config</a>
+  </div>
+</div>
+
+{{if .IsEdit}}
+<div class="card mb">
+  <h2 class="card-title">Discover</h2>
+  <div class="form-row">
+    <form hx-post="/config/sources/discover"
+          hx-target="#discover-status"
+          hx-swap="innerHTML"
+          class="inline-form">
+      <select name="scope" class="input-sm">
+        <option value="notion">Notion</option>
+        <option value="github">GitHub</option>
+      </select>
+      <input type="text" name="target" placeholder="URL or org/repo" class="input input-grow" required>
+      <button type="submit" class="btn btn-primary">Discover</button>
+    </form>
+  </div>
+  <div id="discover-status" class="mt-sm"></div>
+</div>
+{{end}}
+
+<div class="card mb">
+  <div class="filter-bar">
+    <form method="get" action="/config/sources" class="inline-form">
+      <select name="type" class="input-sm" onchange="this.form.submit()">
+        <option value="">All types</option>
+        <option value="notion_page" {{if eq .TypeFilter "notion_page"}}selected{{end}}>Notion Pages</option>
+        <option value="notion_db" {{if eq .TypeFilter "notion_db"}}selected{{end}}>Notion DBs</option>
+        <option value="github_repo" {{if eq .TypeFilter "github_repo"}}selected{{end}}>GitHub Repos</option>
+        <option value="github_project" {{if eq .TypeFilter "github_project"}}selected{{end}}>GitHub Projects</option>
+        <option value="grafana_panel" {{if eq .TypeFilter "grafana_panel"}}selected{{end}}>Grafana</option>
+        <option value="posthog_metric" {{if eq .TypeFilter "posthog_metric"}}selected{{end}}>PostHog</option>
+        <option value="signoz_panel" {{if eq .TypeFilter "signoz_panel"}}selected{{end}}>SigNoz</option>
+      </select>
+      <input type="text" name="q" value="{{.Search}}" placeholder="Search…" class="input input-grow">
+      <button type="submit" class="btn btn-ghost">Filter</button>
+      {{if or .TypeFilter .Search}}<a href="/config/sources" class="btn btn-ghost">Clear</a>{{end}}
+    </form>
+  </div>
+</div>
+
+{{if .Error}}
+<div class="flash flash-error">{{.Error}}</div>
+{{end}}
+
+{{if .Sources}}
+<div class="card">
+  <table class="table" id="sources-table">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>AI Suggestion</th>
+        <th>Configured As</th>
+        {{if $.IsEdit}}<th>Actions</th>{{end}}
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Sources}}
+      <tr id="src-{{.ID}}">
+        <td>
+          {{if .URL}}<a href="{{deref .URL}}" target="_blank" rel="noopener" class="table-link">{{.Title}}</a>{{else}}{{.Title}}{{end}}
+          {{if .ParentID}}<span class="muted small"> (child)</span>{{end}}
+        </td>
+        <td><span class="badge badge-muted">{{.SourceType}}</span></td>
+        <td><span class="badge {{if eq .Status "active"}}badge-green{{else if eq .Status "ignored"}}badge-muted{{else}}badge-cyan{{end}}">{{.Status}}</span></td>
+        <td class="muted small">{{if .AISuggestedPurpose}}{{deref .AISuggestedPurpose}}{{else}}—{{end}}</td>
+        <td>
+          {{range .Configs}}
+          <div class="config-tag">
+            <span class="badge badge-cyan">{{.Purpose}}</span>
+            {{if .TeamID}}<span class="muted small">team:{{.TeamID}}</span>{{end}}
+            {{if $.IsEdit}}
+            <button class="btn-icon muted"
+                    hx-delete="/config/sources/{{$.ID}}/config/{{.ID}}"
+                    hx-target="#src-{{$.ID}}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Remove this config?">✕</button>
+            {{end}}
+          </div>
+          {{else}}
+          <span class="muted small">—</span>
+          {{end}}
+        </td>
+        {{if $.IsEdit}}
+        <td>
+          <details class="action-dropdown">
+            <summary class="btn btn-sm btn-ghost">Assign ▾</summary>
+            <div class="dropdown-content card">
+              <form hx-put="/config/sources/{{.ID}}"
+                    hx-target="#src-{{.ID}}"
+                    hx-swap="outerHTML"
+                    class="stack-form">
+                <select name="purpose" class="input-sm" required>
+                  <option value="">— select purpose —</option>
+                  <option value="project_homepage">project_homepage</option>
+                  <option value="goals_doc">goals_doc</option>
+                  <option value="sprint_doc">sprint_doc</option>
+                  <option value="github_repo">github_repo</option>
+                  <option value="github_project">github_project</option>
+                  <option value="metrics_panel">metrics_panel</option>
+                  <option value="task_label">task_label</option>
+                  <option value="marketing_calendar">marketing_calendar</option>
+                </select>
+                <select name="team_id" class="input-sm">
+                  <option value="">— no team —</option>
+                  {{range $.Teams}}
+                  <option value="{{.ID}}">{{.Name}}</option>
+                  {{end}}
+                </select>
+                <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              </form>
+              <hr class="divider">
+              <form hx-put="/config/sources/{{.ID}}"
+                    hx-target="#src-{{.ID}}"
+                    hx-swap="outerHTML"
+                    class="inline-form mt-sm">
+                <select name="status" class="input-sm">
+                  <option value="active">active</option>
+                  <option value="ignored">ignored</option>
+                  <option value="new">new</option>
+                </select>
+                <button type="submit" class="btn btn-sm btn-ghost">Set status</button>
+              </form>
+            </div>
+          </details>
+        </td>
+        {{end}}
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{else}}
+<div class="card empty-state">No sources found. Use Discover to pull in sources.</div>
+{{end}}
+{{end}}

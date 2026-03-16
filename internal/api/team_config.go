@@ -11,13 +11,21 @@ import (
 
 // teamConfigSlotItem represents a single configured source in a slot.
 type teamConfigSlotItem struct {
-	ID           int64   `json:"id"`
-	CatalogueID  int64   `json:"catalogue_id"`
-	Title        string  `json:"title"`
-	SourceType   string  `json:"source_type"`
-	URL          *string `json:"url,omitempty"`
-	Provenance   string  `json:"provenance"`
-	SprintStatus *string `json:"sprint_status,omitempty"`
+	ID           int64             `json:"id"`
+	CatalogueID  int64             `json:"catalogue_id"`
+	Title        string            `json:"title"`
+	SourceType   string            `json:"source_type"`
+	URL          *string           `json:"url,omitempty"`
+	Provenance   string            `json:"provenance"`
+	SprintStatus *string           `json:"sprint_status,omitempty"`
+	BoardConfig  *boardConfigMeta  `json:"board_config,omitempty"`
+}
+
+// boardConfigMeta holds the user-configurable filter fields for a github_project source.
+type boardConfigMeta struct {
+	TeamAreaField string `json:"team_area_field"`
+	TeamAreaValue string `json:"team_area_value"`
+	SprintField   string `json:"sprint_field"`
 }
 
 // teamConfigSlots is the response for GET /teams/{id}/config.
@@ -36,7 +44,6 @@ var teamSlotKeys = []string{
 	"github_repo",
 	"github_project",
 	"metrics_panel",
-	"task_label",
 	"marketing_calendar",
 }
 
@@ -112,6 +119,14 @@ func (d *Deps) handleGetTeamConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// For github_project, parse board filter config from config_meta.
+		if cfg.Purpose == "github_project" && cfg.ConfigMeta.Valid && cfg.ConfigMeta.String != "" {
+			var bc boardConfigMeta
+			if err := json.Unmarshal([]byte(cfg.ConfigMeta.String), &bc); err == nil {
+				slotItem.BoardConfig = &bc
+			}
+		}
+
 		slots[cfg.Purpose] = append(slots[cfg.Purpose], slotItem)
 	}
 
@@ -152,6 +167,22 @@ func (d *Deps) handleGetMarketingLabels(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]string{"labels": labels})
+}
+
+// handleGetBoardFields returns the fields (with options) for the team's configured
+// github_project board, for use in the config UI picker.
+func (d *Deps) handleGetBoardFields(w http.ResponseWriter, r *http.Request) {
+	teamID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid team id")
+		return
+	}
+	fields, err := d.Engine.GetBoardFields(r.Context(), teamID)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"fields": fields})
 }
 
 // handleSetTeamHomepage sets the homepage for a team and triggers extraction.

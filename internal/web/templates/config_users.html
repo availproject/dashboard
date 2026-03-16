@@ -1,0 +1,88 @@
+{{define "title"}}Users — Dashboard{{end}}
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1 class="page-title">Users</h1>
+  </div>
+  <div class="page-header-right">
+    <a href="/config" class="btn btn-ghost">← Config</a>
+  </div>
+</div>
+
+{{if .Error}}
+<div class="flash flash-error">{{.Error}}</div>
+{{end}}
+
+<div class="card mb">
+  <h2 class="card-title">Add User</h2>
+  <form hx-post="/config/users"
+        hx-target="body"
+        hx-push-url="true"
+        class="inline-form">
+    <input type="text" name="username" placeholder="Username" class="input" required autocomplete="off">
+    <input type="password" name="password" placeholder="Password" class="input" required autocomplete="new-password">
+    <select name="role" class="input-sm" required>
+      <option value="view">view</option>
+      <option value="edit">edit</option>
+    </select>
+    <button type="submit" class="btn btn-primary">Create</button>
+  </form>
+</div>
+
+<div class="card">
+  {{if .Users}}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Role</th>
+        <th>Created</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Users}}
+      <tr id="user-row-{{.ID}}">
+        <td class="mono">{{.Username}}</td>
+        <td><span class="badge {{if eq .Role "edit"}}badge-cyan{{else}}badge-muted{{end}}">{{.Role}}</span></td>
+        <td class="muted small">{{.CreatedAt}}</td>
+        <td class="row-actions">
+          <button class="btn btn-sm btn-ghost" onclick="toggleEditUser({{.ID}})">Edit</button>
+          <button class="btn btn-sm btn-ghost btn-danger"
+                  hx-delete="/config/users/{{.ID}}"
+                  hx-target="body"
+                  hx-push-url="true"
+                  hx-confirm="Delete user {{.Username}}?">Delete</button>
+        </td>
+      </tr>
+      <tr id="edit-user-{{.ID}}" class="hidden">
+        <td colspan="4">
+          <form hx-put="/config/users/{{.ID}}"
+                hx-target="body"
+                hx-push-url="true"
+                class="inline-form">
+            <select name="role" class="input-sm">
+              <option value="">— keep role —</option>
+              <option value="view">view</option>
+              <option value="edit">edit</option>
+            </select>
+            <input type="password" name="password" placeholder="New password (leave blank to keep)" class="input" autocomplete="new-password">
+            <button type="submit" class="btn btn-sm btn-primary">Save</button>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="toggleEditUser({{.ID}})">Cancel</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty-state">No users found.</div>
+  {{end}}
+</div>
+
+<script>
+function toggleEditUser(id) {
+  document.getElementById('edit-user-' + id).classList.toggle('hidden');
+}
+</script>
+{{end}}

@@ -55,10 +55,18 @@ func (s *Store) UpdateSyncRun(ctx context.Context, id int64, status string, sync
 	return nil
 }
 
+// SaveSyncRunTimings stores the timings JSON for the given sync run.
+func (s *Store) SaveSyncRunTimings(ctx context.Context, id int64, timingsJSON string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sync_runs SET timings = ? WHERE id = ?`, timingsJSON, id,
+	)
+	return err
+}
+
 // GetSyncRun returns the sync run with the given id, or sql.ErrNoRows.
 func (s *Store) GetSyncRun(ctx context.Context, id int64) (*SyncRun, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, team_id, scope, status, error, started_at, finished_at FROM sync_runs WHERE id = ?`, id,
+		`SELECT id, team_id, scope, status, error, timings, started_at, finished_at FROM sync_runs WHERE id = ?`, id,
 	)
 	if err != nil {
 		return nil, err
@@ -77,7 +85,7 @@ func (s *Store) GetRunningSyncRun(ctx context.Context, scope string, teamID sql.
 		rows *sql.Rows
 		err  error
 	)
-	const base = `SELECT id, team_id, scope, status, error, started_at, finished_at FROM sync_runs WHERE scope = ? AND status = 'running'`
+	const base = `SELECT id, team_id, scope, status, error, timings, started_at, finished_at FROM sync_runs WHERE scope = ? AND status = 'running'`
 	if teamID.Valid {
 		rows, err = s.db.QueryContext(ctx, base+` AND team_id = ? ORDER BY id DESC LIMIT 1`, scope, teamID.Int64)
 	} else {
@@ -96,7 +104,7 @@ func (s *Store) GetRunningSyncRun(ctx context.Context, scope string, teamID sql.
 // GetLastCompletedSyncRun returns the most recent sync_run with status='done'
 // for the given scope and teamID, or sql.ErrNoRows if none exists.
 func (s *Store) GetLastCompletedSyncRun(ctx context.Context, scope string, teamID sql.NullInt64) (*SyncRun, error) {
-	const base = `SELECT id, team_id, scope, status, error, started_at, finished_at FROM sync_runs WHERE scope = ? AND status = 'done'`
+	const base = `SELECT id, team_id, scope, status, error, timings, started_at, finished_at FROM sync_runs WHERE scope = ? AND status = 'done'`
 	var (
 		rows *sql.Rows
 		err  error
@@ -118,7 +126,7 @@ func (s *Store) GetLastCompletedSyncRun(ctx context.Context, scope string, teamI
 
 func scanSyncRun(rows *sql.Rows) (*SyncRun, error) {
 	var r SyncRun
-	if err := rows.Scan(&r.ID, &r.TeamID, &r.Scope, &r.Status, &r.Error, &r.StartedAt, &r.FinishedAt); err != nil {
+	if err := rows.Scan(&r.ID, &r.TeamID, &r.Scope, &r.Status, &r.Error, &r.Timings, &r.StartedAt, &r.FinishedAt); err != nil {
 		return nil, err
 	}
 	return &r, nil

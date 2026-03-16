@@ -1,0 +1,51 @@
+{{define "source_row.html"}}
+<tr id="src-{{.Source.ID}}">
+  <td>
+    {{if .Source.URL}}<a href="{{deref .Source.URL}}" target="_blank" rel="noopener" class="table-link">{{.Source.Title}}</a>{{else}}{{.Source.Title}}{{end}}
+    {{if .Source.ParentID}}<span class="muted small"> (child)</span>{{end}}
+  </td>
+  <td><span class="badge badge-muted">{{.Source.SourceType}}</span></td>
+  <td><span class="badge {{if eq .Source.Status "active"}}badge-green{{else if eq .Source.Status "ignored"}}badge-muted{{else}}badge-cyan{{end}}">{{.Source.Status}}</span></td>
+  <td class="muted small">{{if .Source.AISuggestedPurpose}}{{deref .Source.AISuggestedPurpose}}{{else}}—{{end}}</td>
+  <td>
+    {{range .Source.Configs}}
+    <div class="config-tag">
+      <span class="badge badge-cyan">{{.Purpose}}</span>
+      {{if .TeamID}}<span class="muted small">team:{{.TeamID}}</span>{{end}}
+    </div>
+    {{else}}
+    <span class="muted small">—</span>
+    {{end}}
+  </td>
+  <td>
+    <details class="action-dropdown">
+      <summary class="btn btn-sm btn-ghost">Assign ▾</summary>
+      <div class="dropdown-content card">
+        <form hx-put="/config/sources/{{.Source.ID}}"
+              hx-target="#src-{{.Source.ID}}"
+              hx-swap="outerHTML"
+              class="stack-form">
+          <select name="purpose" class="input-sm" required>
+            <option value="">— select purpose —</option>
+            <option value="project_homepage">project_homepage</option>
+            <option value="goals_doc">goals_doc</option>
+            <option value="sprint_doc">sprint_doc</option>
+            <option value="github_repo">github_repo</option>
+            <option value="github_project">github_project</option>
+            <option value="metrics_panel">metrics_panel</option>
+            <option value="task_label">task_label</option>
+            <option value="marketing_calendar">marketing_calendar</option>
+          </select>
+          <select name="team_id" class="input-sm">
+            <option value="">— no team —</option>
+            {{range .Teams}}
+            <option value="{{.ID}}">{{.Name}}</option>
+            {{end}}
+          </select>
+          <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </form>
+      </div>
+    </details>
+  </td>
+</tr>
+{{end}}

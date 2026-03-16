@@ -34,7 +34,6 @@ var slotDisplayOrder = []string{
 	"github_repo",
 	"github_project",
 	"metrics_panel",
-	"task_label",
 	"marketing_calendar",
 }
 
@@ -45,7 +44,6 @@ var slotLabels = map[string]string{
 	"github_repo":        "GitHub Repos",
 	"github_project":     "Project Board",
 	"metrics_panel":      "Metrics",
-	"task_label":         "Task Label",
 	"marketing_calendar": "Marketing Calendar",
 }
 
@@ -204,7 +202,9 @@ func (v *ConfigTeamSlotsView) pushSlotView() tea.Cmd {
 			current = &items[0]
 		}
 		subView = NewConfigHomepageSlotView(v.c, v.teamID, v.teamName, current)
-	case "goals_doc", "github_project", "task_label":
+	case "github_project":
+		subView = NewConfigBoardSlotView(v.c, v.teamID, v.teamName, items)
+	case "goals_doc":
 		subView = NewConfigSingleSlotView(v.c, v.teamID, v.teamName, purpose, items)
 	case "marketing_calendar":
 		var currentLabel *string
@@ -252,10 +252,6 @@ func (v *ConfigTeamSlotsView) View() string {
 				sb.WriteString("\n  " + cfgDimStyle.Render("─── Will be auto-configured from homepage ──") + "\n")
 			}
 		}
-		// Show divider before manual section.
-		if purpose == "task_label" {
-			sb.WriteString("\n  " + cfgDimStyle.Render("─── Manual ─────────────────────────────────") + "\n")
-		}
 		// Show divider before marketing section.
 		if purpose == "marketing_calendar" {
 			sb.WriteString("\n  " + cfgDimStyle.Render("─── Marketing ───────────────────────────────") + "\n")
@@ -293,7 +289,7 @@ func (v *ConfigTeamSlotsView) slotSummary(purpose string) string {
 			return "(not set — start here)"
 		}
 		return truncate(items[0].Title, 40)
-	case "goals_doc", "task_label":
+	case "goals_doc":
 		if len(items) == 0 {
 			return "(none)"
 		}
@@ -334,11 +330,11 @@ func (v *ConfigTeamSlotsView) slotSummary(purpose string) string {
 		if len(items) == 0 {
 			return "(none)"
 		}
-		title := items[0].Title
-		if items[0].URL != nil {
-			title = *items[0].URL
+		bc := items[0].BoardConfig
+		if bc != nil && bc.TeamAreaValue != "" {
+			return truncate(fmt.Sprintf("%s · %s", items[0].Title, bc.TeamAreaValue), 40)
 		}
-		return truncate(title, 40)
+		return truncate(items[0].Title, 40)
 	case "metrics_panel":
 		if len(items) == 0 {
 			if v.data.ExtractionStatus == "done" {

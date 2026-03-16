@@ -1,0 +1,49 @@
+{{define "title"}}Admin — Dashboard{{end}}
+{{define "content"}}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1 class="page-title">Admin</h1>
+  </div>
+  <div class="page-header-right">
+    <a href="/config" class="btn btn-ghost">← Config</a>
+  </div>
+</div>
+
+<div class="admin-grid">
+  <div class="card">
+    <h2 class="card-title">AutoTag</h2>
+    <p class="muted mb">Re-run AI classification on all unreviewed sources. This may take a few minutes.</p>
+    <div id="autotag-status">
+      <button class="btn btn-primary"
+              hx-post="/config/admin/autotag"
+              hx-target="#autotag-status"
+              hx-swap="outerHTML">Run AutoTag</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Clear AI Cache</h2>
+    <p class="muted mb">Remove cached AI pipeline outputs. Use when you want to force fresh AI analysis.</p>
+    <div class="inline-form mb">
+      <select id="cache-pipeline" class="input-sm">
+        <option value="">All pipelines</option>
+        <option value="team_status">team_status</option>
+        <option value="sprint_parse">sprint_parse</option>
+        <option value="workload">workload</option>
+        <option value="velocity">velocity</option>
+        <option value="alignment">alignment</option>
+        <option value="dates_extract">dates_extract</option>
+        <option value="homepage_extract">homepage_extract</option>
+      </select>
+    </div>
+    <div id="cache-status">
+      <button class="btn btn-ghost btn-danger"
+              hx-delete="/config/admin/ai-cache"
+              hx-target="#cache-status"
+              hx-swap="innerHTML"
+              hx-confirm="Clear AI cache? This will force re-analysis on next sync."
+              hx-include="#cache-pipeline">Clear Cache</button>
+    </div>
+  </div>
+</div>
+{{end}}

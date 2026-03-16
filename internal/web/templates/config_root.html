@@ -1,0 +1,30 @@
+{{define "title"}}Config — Dashboard{{end}}
+{{define "content"}}
+<div class="page-header">
+  <h1 class="page-title">Configuration</h1>
+</div>
+<div class="config-nav-grid">
+  <a href="/config/teams" class="config-nav-card">
+    <div class="config-nav-title">Teams</div>
+    <div class="config-nav-desc muted">Manage teams and members</div>
+  </a>
+  <a href="/config/sources" class="config-nav-card">
+    <div class="config-nav-title">Sources</div>
+    <div class="config-nav-desc muted">Wire GitHub, Notion, and other sources to teams</div>
+  </a>
+  <a href="/config/annotations" class="config-nav-card">
+    <div class="config-nav-title">Annotations</div>
+    <div class="config-nav-desc muted">Manage standing notes and sprint-scoped observations</div>
+  </a>
+  {{if .IsEdit}}
+  <a href="/config/users" class="config-nav-card">
+    <div class="config-nav-title">Users</div>
+    <div class="config-nav-desc muted">Manage dashboard access</div>
+  </a>
+  <a href="/config/admin" class="config-nav-card">
+    <div class="config-nav-title">Admin</div>
+    <div class="config-nav-desc muted">AutoTag, AI cache, and maintenance</div>
+  </a>
+  {{end}}
+</div>
+{{end}}

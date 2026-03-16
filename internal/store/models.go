@@ -89,6 +89,7 @@ type SyncRun struct {
 	Scope      string
 	Status     string
 	Error      sql.NullString
+	Timings    sql.NullString // JSON: map of step name → milliseconds
 	StartedAt  time.Time
 	FinishedAt sql.NullTime
 }

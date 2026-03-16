@@ -12,8 +12,10 @@ import (
 func (s *Store) UpsertSourceConfig(ctx context.Context, catalogueID int64, teamID sql.NullInt64, purpose string, configMeta sql.NullString, provenance string) (*SourceConfig, error) {
 	existing, err := s.findSourceConfig(ctx, catalogueID, teamID, purpose)
 	if err == nil {
-		// Update config_meta if it has changed.
-		if existing.ConfigMeta != configMeta {
+		// Update config_meta only when the new value is explicitly set (non-null).
+		// A null new value is treated as "keep existing" to prevent automated
+		// callers (e.g. homepage extraction) from wiping user-configured settings.
+		if configMeta.Valid && existing.ConfigMeta != configMeta {
 			if _, err2 := s.db.ExecContext(ctx,
 				`UPDATE source_configs SET config_meta = ? WHERE id = ?`,
 				configMeta, existing.ID,

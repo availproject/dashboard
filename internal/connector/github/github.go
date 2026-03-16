@@ -22,6 +22,202 @@ type Client struct {
 	token  string
 }
 
+// BoardItem represents a linked issue on a GitHub ProjectV2 board.
+// State is normalized to lowercase ("open"/"closed").
+type BoardItem struct {
+	Number        int
+	Title         string
+	State         string   // "open" or "closed"
+	NodeID        string
+	Owner         string
+	Repo          string
+	Assignees     []string // GitHub logins
+	Labels        []string // label names
+	Status        string   // project Status field value, e.g. "In Progress"
+	TeamArea      string   // Team/Area field value
+	Sprint        string   // iteration title, e.g. "Sprint 12"
+	SprintStart   string   // "YYYY-MM-DD"
+	SprintDays    int      // iteration duration in days
+}
+
+// FetchProjectItems pages through all items on a GitHub ProjectV2 board and returns
+// the linked issues as BoardItems. Draft issues and pull requests are skipped.
+func (c *Client) FetchProjectItems(ctx context.Context, projectID string) ([]BoardItem, error) {
+	if err := c.checkToken(); err != nil {
+		return nil, err
+	}
+
+	type issueContent struct {
+		ID         string `json:"id"`
+		Number     int    `json:"number"`
+		Title      string `json:"title"`
+		State      string `json:"state"`
+		Repository struct {
+			Name  string `json:"name"`
+			Owner struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+		Assignees struct {
+			Nodes []struct {
+				Login string `json:"login"`
+			} `json:"nodes"`
+		} `json:"assignees"`
+		Labels struct {
+			Nodes []struct {
+				Name string `json:"name"`
+			} `json:"nodes"`
+		} `json:"labels"`
+	}
+	type projectItem struct {
+		Type    string       `json:"type"`
+		Content issueContent `json:"content"`
+		FieldValues struct {
+			Nodes []struct {
+				Name      string `json:"name"`      // single-select value
+				Text      string `json:"text"`      // text field value
+				Title     string `json:"title"`     // iteration title
+				StartDate string `json:"startDate"` // iteration start date
+				Duration  int    `json:"duration"`  // iteration duration in days
+				Field     struct {
+					Name string `json:"name"`
+				} `json:"field"`
+			} `json:"nodes"`
+		} `json:"fieldValues"`
+	}
+	type pageInfo struct {
+		HasNextPage bool   `json:"hasNextPage"`
+		EndCursor   string `json:"endCursor"`
+	}
+	type projectData struct {
+		Node struct {
+			Items struct {
+				PageInfo pageInfo      `json:"pageInfo"`
+				Nodes    []projectItem `json:"nodes"`
+			} `json:"items"`
+		} `json:"node"`
+	}
+
+	const query = `query($projectID: ID!, $cursor: String) {
+		node(id: $projectID) {
+			... on ProjectV2 {
+				items(first: 100, after: $cursor) {
+					pageInfo { hasNextPage endCursor }
+					nodes {
+						type
+						content {
+							... on Issue {
+								id
+								number
+								title
+								state
+								repository {
+									name
+									owner { login }
+								}
+								assignees(first: 10) {
+									nodes { login }
+								}
+								labels(first: 20) {
+									nodes { name }
+								}
+							}
+						}
+						fieldValues(first: 20) {
+							nodes {
+								... on ProjectV2ItemFieldSingleSelectValue {
+									name
+									field { ... on ProjectV2SingleSelectField { name } }
+								}
+								... on ProjectV2ItemFieldTextValue {
+									text
+									field { ... on ProjectV2Field { name } }
+								}
+								... on ProjectV2ItemFieldIterationValue {
+									title
+									startDate
+									duration
+									field { ... on ProjectV2IterationField { name } }
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	var results []BoardItem
+	var cursor *string
+	for {
+		vars := map[string]any{"projectID": projectID, "cursor": cursor}
+		var data projectData
+		if err := c.graphql(ctx, query, vars, &data); err != nil {
+			return nil, err
+		}
+
+		for _, item := range data.Node.Items.Nodes {
+			if item.Type != "ISSUE" {
+				continue
+			}
+			content := item.Content
+			if content.Number == 0 {
+				continue
+			}
+			bi := BoardItem{
+				NodeID: content.ID,
+				Number: content.Number,
+				Title:  content.Title,
+				State:  strings.ToLower(content.State),
+				Owner:  content.Repository.Owner.Login,
+				Repo:   content.Repository.Name,
+			}
+			for _, a := range content.Assignees.Nodes {
+				if a.Login != "" {
+					bi.Assignees = append(bi.Assignees, a.Login)
+				}
+			}
+			for _, l := range content.Labels.Nodes {
+				if l.Name != "" {
+					bi.Labels = append(bi.Labels, l.Name)
+				}
+			}
+			for _, fv := range item.FieldValues.Nodes {
+				fn := strings.ToLower(strings.ReplaceAll(fv.Field.Name, " ", ""))
+				switch fn {
+				case "status":
+					if fv.Name != "" {
+						bi.Status = fv.Name
+					}
+				case "team", "area", "team/area":
+					val := fv.Name
+					if val == "" {
+						val = fv.Text
+					}
+					if val != "" {
+						bi.TeamArea = val
+					}
+				default:
+					// Capture any iteration field value (sprint).
+					if fv.Title != "" && fv.StartDate != "" {
+						bi.Sprint = fv.Title
+						bi.SprintStart = fv.StartDate
+						bi.SprintDays = fv.Duration
+					}
+				}
+			}
+			results = append(results, bi)
+		}
+
+		if !data.Node.Items.PageInfo.HasNextPage {
+			break
+		}
+		c2 := data.Node.Items.PageInfo.EndCursor
+		cursor = &c2
+	}
+	return results, nil
+}
+
 // DraftIssue represents a draft issue in a GitHub ProjectV2.
 type DraftIssue struct {
 	Title string
@@ -409,59 +605,97 @@ func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connecto
 	return items, nil
 }
 
-// FetchIssues fetches issues for a repo relevant to the given label.
-// It returns all currently open issues with the label (full sprint board view)
-// plus all recently closed issues with the label. The label filter is applied to
-// closed issues because autotag enforces label presence on closed project issues,
-// so a label-filtered closed search reliably captures completed work without
-// pulling in unrelated issues from shared repos.
-func (c *Client) FetchIssues(ctx context.Context, owner, repo, label string, since time.Time) ([]*gh.Issue, error) {
+// ProjectField describes a single field on a GitHub ProjectV2 board.
+type ProjectField struct {
+	Name    string   // field display name
+	Type    string   // "single_select", "iteration", "text", "number", "date", "other"
+	Options []string // single_select: option names; iteration: iteration titles (newest first)
+}
+
+// FetchProjectFields returns all fields defined on a GitHub ProjectV2 board,
+// including the available options for single-select fields and iteration titles.
+func (c *Client) FetchProjectFields(ctx context.Context, projectID string) ([]ProjectField, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
 	}
 
-	var all []*gh.Issue
-
-	// 1. All open issues with this label — no date filter so we always see the full board.
-	if err := c.searchIssues(ctx,
-		fmt.Sprintf("repo:%s/%s label:%q is:open", owner, repo, label),
-		&all,
-	); err != nil {
-		return nil, err
+	type singleSelectOption struct {
+		Name string `json:"name"`
+	}
+	type iteration struct {
+		Title string `json:"title"`
+	}
+	type rawField struct {
+		// Common
+		Name string `json:"name"`
+		// ProjectV2SingleSelectField
+		Options []singleSelectOption `json:"options"`
+		// ProjectV2IterationField
+		Configuration struct {
+			Iterations []iteration `json:"iterations"`
+		} `json:"configuration"`
+	}
+	type fieldsData struct {
+		Node struct {
+			Fields struct {
+				Nodes []json.RawMessage `json:"nodes"`
+			} `json:"fields"`
+		} `json:"node"`
 	}
 
-	// 2. Recently closed issues with this label. Autotag enforces the label on closed
-	// issues, so filtering by label is safe and avoids pulling in unrelated issues
-	// from shared repos (e.g. a roadmap repo used by multiple teams).
-	closedSince := time.Now().AddDate(0, 0, -90)
-	if since.Before(closedSince) {
-		closedSince = since
-	}
-	if err := c.searchIssues(ctx,
-		fmt.Sprintf("repo:%s/%s label:%q is:closed closed:>%s", owner, repo, label, closedSince.UTC().Format("2006-01-02")),
-		&all,
-	); err != nil {
-		return nil, err
-	}
-
-	return all, nil
-}
-
-// searchIssues executes a GitHub issue search query and appends results to dst.
-func (c *Client) searchIssues(ctx context.Context, query string, dst *[]*gh.Issue) error {
-	opts := &gh.SearchOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	for {
-		result, resp, err := c.client.Search.Issues(ctx, query, opts)
-		if err != nil {
-			return fmt.Errorf("github: search issues %q: %w", query, err)
+	const query = `query($projectID: ID!) {
+		node(id: $projectID) {
+			... on ProjectV2 {
+				fields(first: 50) {
+					nodes {
+						... on ProjectV2Field {
+							name
+						}
+						... on ProjectV2SingleSelectField {
+							name
+							options { name }
+						}
+						... on ProjectV2IterationField {
+							name
+							configuration {
+								iterations { title }
+							}
+						}
+					}
+				}
+			}
 		}
-		*dst = append(*dst, result.Issues...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
+	}`
+
+	var data fieldsData
+	if err := c.graphql(ctx, query, map[string]any{"projectID": projectID}, &data); err != nil {
+		return nil, fmt.Errorf("github: fetch project fields: %w", err)
 	}
-	return nil
+
+	var fields []ProjectField
+	for _, raw := range data.Node.Fields.Nodes {
+		var rf rawField
+		if err := json.Unmarshal(raw, &rf); err != nil || rf.Name == "" {
+			continue
+		}
+		f := ProjectField{Name: rf.Name}
+		switch {
+		case len(rf.Options) > 0:
+			f.Type = "single_select"
+			for _, o := range rf.Options {
+				f.Options = append(f.Options, o.Name)
+			}
+		case len(rf.Configuration.Iterations) > 0:
+			f.Type = "iteration"
+			for _, it := range rf.Configuration.Iterations {
+				f.Options = append(f.Options, it.Title)
+			}
+		default:
+			f.Type = "text"
+		}
+		fields = append(fields, f)
+	}
+	return fields, nil
 }
 
 // FetchDraftIssues fetches draft issues from a ProjectV2, filtered by Team/Area field value.
@@ -704,105 +938,6 @@ func (c *Client) FetchMarkdownFile(ctx context.Context, owner, repo, path string
 	return content, sha, nil
 }
 
-// FetchIssueProjectStatuses takes a list of issue node IDs and returns a map of
-// node ID → project Status field value for issues that are members of projectID.
-// If projectID is empty, the first Status field value found is used regardless of project.
-// Issues not in the project or without a Status value are omitted from the map.
-// Node IDs are batched in groups of 100 (GitHub GraphQL nodes() limit).
-func (c *Client) FetchIssueProjectStatuses(ctx context.Context, nodeIDs []string, projectID string) (map[string]string, error) {
-	if err := c.checkToken(); err != nil {
-		return nil, err
-	}
-	if len(nodeIDs) == 0 {
-		return map[string]string{}, nil
-	}
-
-	type projectRef struct {
-		ID string `json:"id"`
-	}
-	type fieldValueNode struct {
-		Name  string `json:"name"`
-		Field struct {
-			Name string `json:"name"`
-		} `json:"field"`
-	}
-	type projectItemNode struct {
-		Project     projectRef `json:"project"`
-		FieldValues struct {
-			Nodes []fieldValueNode `json:"nodes"`
-		} `json:"fieldValues"`
-	}
-	type issueNode struct {
-		ID           string `json:"id"`
-		ProjectItems struct {
-			Nodes []projectItemNode `json:"nodes"`
-		} `json:"projectItems"`
-	}
-	type nodesData struct {
-		Nodes []json.RawMessage `json:"nodes"`
-	}
-
-	const query = `query($ids: [ID!]!) {
-		nodes(ids: $ids) {
-			... on Issue {
-				id
-				projectItems(first: 10) {
-					nodes {
-						project { id }
-						fieldValues(first: 10) {
-							nodes {
-								... on ProjectV2ItemFieldSingleSelectValue {
-									name
-									field { ... on ProjectV2SingleSelectField { name } }
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}`
-
-	result := map[string]string{}
-	for i := 0; i < len(nodeIDs); i += 100 {
-		end := i + 100
-		if end > len(nodeIDs) {
-			end = len(nodeIDs)
-		}
-		batch := nodeIDs[i:end]
-
-		var data nodesData
-		if err := c.graphql(ctx, query, map[string]any{"ids": batch}, &data); err != nil {
-			return nil, err
-		}
-
-		for _, raw := range data.Nodes {
-			if string(raw) == "null" {
-				continue
-			}
-			var issue issueNode
-			if err := json.Unmarshal(raw, &issue); err != nil || issue.ID == "" {
-				continue
-			}
-			for _, item := range issue.ProjectItems.Nodes {
-				if projectID != "" && item.Project.ID != projectID {
-					continue
-				}
-				for _, fv := range item.FieldValues.Nodes {
-					if strings.EqualFold(fv.Field.Name, "status") && fv.Name != "" {
-						result[issue.ID] = fv.Name
-						break
-					}
-				}
-				if result[issue.ID] != "" {
-					break
-				}
-			}
-		}
-	}
-	return result, nil
-}
-
 // CloseIssue closes a GitHub issue by number.
 func (c *Client) CloseIssue(ctx context.Context, owner, repo string, number int) error {
 	if err := c.checkToken(); err != nil {
@@ -816,219 +951,3 @@ func (c *Client) CloseIssue(ctx context.Context, owner, repo string, number int)
 	return nil
 }
 
-// IssueOwnerRepo extracts owner and repo from a gh.Issue by parsing its RepositoryURL
-// (e.g. "https://api.github.com/repos/owner/repo") or HTMLURL as a fallback.
-func IssueOwnerRepo(issue *gh.Issue) (string, string) {
-	if u := issue.GetRepositoryURL(); u != "" {
-		// https://api.github.com/repos/{owner}/{repo}
-		const prefix = "https://api.github.com/repos/"
-		if after, ok := strings.CutPrefix(u, prefix); ok {
-			parts := strings.SplitN(after, "/", 2)
-			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-				return parts[0], parts[1]
-			}
-		}
-	}
-	// Fallback: https://github.com/{owner}/{repo}/issues/{number}
-	if u := issue.GetHTMLURL(); u != "" {
-		const prefix = "https://github.com/"
-		if after, ok := strings.CutPrefix(u, prefix); ok {
-			parts := strings.SplitN(after, "/", 3)
-			if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-				return parts[0], parts[1]
-			}
-		}
-	}
-	return "", ""
-}
-
-// AutoTagIssues pages all items in the project; for each item with Team/Area set
-// but missing the corresponding label on the linked issue, applies the label.
-// The owner parameter is used only as a fallback if the issue's repository cannot
-// be determined from GraphQL; repo is always resolved per-issue from content.
-func (c *Client) AutoTagIssues(ctx context.Context, owner, _, projectID string, teamLabelMap map[string]string) error {
-	if err := c.checkToken(); err != nil {
-		return err
-	}
-
-	type issueContent struct {
-		Number int    `json:"number"`
-		State  string `json:"state"`
-		Repository struct {
-			Name  string `json:"name"`
-			Owner struct {
-				Login string `json:"login"`
-			} `json:"owner"`
-		} `json:"repository"`
-		Labels struct {
-			Nodes []struct {
-				Name string `json:"name"`
-			} `json:"nodes"`
-		} `json:"labels"`
-	}
-	type projectItem struct {
-		Type    string       `json:"type"`
-		Content issueContent `json:"content"`
-		FieldValues struct {
-			Nodes []struct {
-				Name  string `json:"name"`
-				Field struct {
-					Name string `json:"name"`
-				} `json:"field"`
-			} `json:"nodes"`
-		} `json:"fieldValues"`
-	}
-	type pageInfo struct {
-		HasNextPage bool   `json:"hasNextPage"`
-		EndCursor   string `json:"endCursor"`
-	}
-	type projectData struct {
-		Node struct {
-			Items struct {
-				PageInfo pageInfo      `json:"pageInfo"`
-				Nodes    []projectItem `json:"nodes"`
-			} `json:"items"`
-		} `json:"node"`
-	}
-
-	const query = `query($projectID: ID!, $cursor: String) {
-		node(id: $projectID) {
-			... on ProjectV2 {
-				items(first: 100, after: $cursor) {
-					pageInfo { hasNextPage endCursor }
-					nodes {
-						type
-						content {
-							... on Issue {
-								number
-								state
-								repository {
-									name
-									owner { login }
-								}
-								labels(first: 20) {
-									nodes { name }
-								}
-							}
-						}
-						fieldValues(first: 20) {
-							nodes {
-								... on ProjectV2ItemFieldSingleSelectValue {
-									name
-									field { ... on ProjectV2SingleSelectField { name } }
-								}
-								... on ProjectV2ItemFieldTextValue {
-									text
-									field { ... on ProjectV2Field { name } }
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}`
-
-	var (
-		cursor         *string
-		totalItems     int
-		alreadyLabeled int
-		noTeamArea     int
-		noLabel        int
-		labeled        int
-		labelErrors    int
-		unmappedValues = map[string]int{}
-	)
-	for {
-		vars := map[string]any{"projectID": projectID, "cursor": cursor}
-		var data projectData
-		if err := c.graphql(ctx, query, vars, &data); err != nil {
-			return err
-		}
-		pageItems := len(data.Node.Items.Nodes)
-		totalItems += pageItems
-
-		for _, item := range data.Node.Items.Nodes {
-			if item.Type != "ISSUE" {
-				continue
-			}
-
-			// Find Team/Area field value
-			teamAreaValue := ""
-			for _, fv := range item.FieldValues.Nodes {
-				fn := strings.ToLower(strings.ReplaceAll(fv.Field.Name, " ", ""))
-				if fn == "team" || fn == "area" || fn == "team/area" {
-					if fv.Name != "" {
-						teamAreaValue = fv.Name
-					}
-					break
-				}
-			}
-			if teamAreaValue == "" {
-				noTeamArea++
-				continue
-			}
-
-			// Look up target label
-			targetLabel, ok := teamLabelMap[teamAreaValue]
-			if !ok {
-				unmappedValues[teamAreaValue]++
-				noLabel++
-				continue
-			}
-
-			// Check if issue already has the label
-			hasLabel := false
-			for _, lbl := range item.Content.Labels.Nodes {
-				if lbl.Name == targetLabel {
-					hasLabel = true
-					break
-				}
-			}
-			if hasLabel {
-				alreadyLabeled++
-				continue
-			}
-
-			issueNum := item.Content.Number
-			if issueNum == 0 {
-				continue
-			}
-
-			// Resolve owner/repo from the issue itself; fall back to the caller-provided owner.
-			issueOwner := item.Content.Repository.Owner.Login
-			issueRepo := item.Content.Repository.Name
-			if issueOwner == "" {
-				issueOwner = owner
-			}
-			if issueOwner == "" || issueRepo == "" {
-				log.Printf("autotag: skip issue #%d: cannot determine repository", issueNum)
-				continue
-			}
-
-			t0 := time.Now()
-			_, _, err := c.client.Issues.AddLabelsToIssue(ctx, issueOwner, issueRepo, issueNum, []string{targetLabel})
-			if err != nil {
-				labelErrors++
-				log.Printf("autotag: error labeling issue #%d (%s/%s) with %q: %v (%.2fs)", issueNum, issueOwner, issueRepo, targetLabel, err, time.Since(t0).Seconds())
-				continue
-			}
-			labeled++
-			log.Printf("autotag: labeled issue #%d (%s/%s) with %q in %.2fs", issueNum, issueOwner, issueRepo, targetLabel, time.Since(t0).Seconds())
-		}
-
-		if !data.Node.Items.PageInfo.HasNextPage {
-			break
-		}
-		c2 := data.Node.Items.PageInfo.EndCursor
-		cursor = &c2
-	}
-	if len(unmappedValues) > 0 {
-		log.Printf("autotag: %d items — %d labeled, %d already had label, %d no team/area, %d unmapped %v, %d errors",
-			totalItems, labeled, alreadyLabeled, noTeamArea, noLabel, unmappedValues, labelErrors)
-	} else {
-		log.Printf("autotag: %d items — %d labeled, %d already had label, %d no team/area, %d errors",
-			totalItems, labeled, alreadyLabeled, noTeamArea, labelErrors)
-	}
-	return nil
-}

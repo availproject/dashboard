@@ -40,9 +40,14 @@ type Client struct {
 }
 
 // New creates a new Client pointing at the given server address.
+// The API is now mounted at /api on the server, so we append that prefix here
+// so all existing URL constructions in this file continue to work unchanged.
 func New(serverAddr string) *Client {
+	// Strip any trailing slash, then append /api so paths like
+	// c.serverAddr + "/org/overview" resolve to /api/org/overview.
+	base := strings.TrimRight(serverAddr, "/")
 	return &Client{
-		serverAddr: serverAddr,
+		serverAddr: base + "/api",
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -504,15 +509,30 @@ type SourceItemResponse struct {
 	Configs            []SourceConfigResponse `json:"configs"`
 }
 
+// ProjectField represents a field on a GitHub ProjectV2 board.
+type ProjectField struct {
+	Name    string   `json:"name"`
+	Type    string   `json:"type"` // "single_select", "iteration", "text"
+	Options []string `json:"options"`
+}
+
+// BoardConfigMeta holds the user-configurable filter fields for a github_project source.
+type BoardConfigMeta struct {
+	TeamAreaField string `json:"team_area_field"`
+	TeamAreaValue string `json:"team_area_value"`
+	SprintField   string `json:"sprint_field"`
+}
+
 // TeamConfigSlotItem represents a single configured source in a slot.
 type TeamConfigSlotItem struct {
-	ID           int64   `json:"id"`
-	CatalogueID  int64   `json:"catalogue_id"`
-	Title        string  `json:"title"`
-	SourceType   string  `json:"source_type"`
-	URL          *string `json:"url,omitempty"`
-	Provenance   string  `json:"provenance"`
-	SprintStatus *string `json:"sprint_status,omitempty"`
+	ID           int64            `json:"id"`
+	CatalogueID  int64            `json:"catalogue_id"`
+	Title        string           `json:"title"`
+	SourceType   string           `json:"source_type"`
+	URL          *string          `json:"url,omitempty"`
+	Provenance   string           `json:"provenance"`
+	SprintStatus *string          `json:"sprint_status,omitempty"`
+	BoardConfig  *BoardConfigMeta `json:"board_config,omitempty"`
 }
 
 // TeamConfigSlotsResponse mirrors the API response for GET /teams/{id}/config.
@@ -1062,6 +1082,22 @@ func (c *Client) PutConfigTeam(id int64, name string) (*TeamConfigResponse, erro
 	}
 	var result TeamConfigResponse
 	return &result, decodeJSON(resp, &result)
+}
+
+// GetBoardFields returns the fields (with options) for the team's configured
+// github_project board, for use in the config UI picker.
+func (c *Client) GetBoardFields(teamID int64) ([]ProjectField, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("%s/teams/%d/board-fields", c.serverAddr, teamID), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var result struct {
+		Fields []ProjectField `json:"fields"`
+	}
+	return result.Fields, decodeJSON(resp, &result)
 }
 
 // GetTeamMarketingLabels returns the available project label options from the
