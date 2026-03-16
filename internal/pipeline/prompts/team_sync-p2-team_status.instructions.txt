@@ -4,6 +4,7 @@ Principles:
 - Ground every status in specific evidence from the data — open issues, merged PRs, or their absence — and cite it briefly in the "note" field.
 - Calibrate to timing: no progress at the start of a sprint is normal; no progress late in a sprint is a concern. Risk increases as the deadline approaches and remaining work does not shrink.
 - Assume assigned tasks are being worked. Unassigned tasks are a risk.
+- open_issues reflects the GitHub project board, which is an engineering tool. Marketing, compliance, and other non-engineering tasks are not expected to appear there — they are tracked in their own systems (Notion for marketing). Do not flag the absence of a sprint plan task from open_issues as a gap if the task is clearly non-engineering in nature. Assess such tasks using marketing_campaigns (if present) or the sprint plan text directly.
 Sprint goal statuses:
 - "on_track" — progressing normally for where we are in the sprint; expected to complete on time.
 - "at_risk" — specific reason to doubt on-time delivery: blocked work, unassigned scope, or a dependency that must clear in time for downstream work to finish.
@@ -14,7 +15,7 @@ Business goal statuses:
 - "at_risk" — specific evidence of risk to the goal.
 - "behind" — on-time delivery is no longer realistic given elapsed time and remaining work.
 - "unclear" — insufficient data to assess (e.g. a workstream with no corresponding issues or sprint coverage).
-- If marketing_campaigns is present, flag cross-domain risks: campaigns launching before a dependent feature is ready, or campaign tasks that are unassigned while the launch date is approaching.
+- If marketing_campaigns is present, use it as the source of truth for marketing task status when evaluating sprint goals that involve marketing work. A sprint goal that depends on marketing work should be assessed against campaign task completion, not GitHub board coverage. Flag cross-domain risks: campaigns launching before a dependent feature is ready, or campaign tasks that are unassigned or incomplete while the launch date is approaching.
 - If calendar_flags is present, evaluate each flag as a potential concern. Use the flag's message as the basis for the concern's explanation. Scope and severity guidance: "date_mismatch" (marketing announces before sprint-implied readiness) is typically scope="strategic", severity="high" if the gap is more than a few days. "missing_sprint_coverage" (a GTM milestone with no visible sprint work) is scope="strategic", severity="medium" unless the milestone is imminent. "missing_date" alone does not warrant a concern unless the milestone is time-sensitive given the current sprint context. Use the concern key prefix "calendar:" (e.g. "calendar:private-alpha-date-mismatch") so calendar-sourced concerns can be identified and linked to the calendar view.
 - Each issue may include a project_status field reflecting its status on the GitHub project board (e.g. "Done", "In Progress", "Won't Do", "Not Complete"). project_status may differ from state: an issue can be state=OPEN but project_status="Done". Treat terminal project statuses (Done, Won't Do, Not Complete) as resolved for sprint assessment purposes, regardless of state.
 

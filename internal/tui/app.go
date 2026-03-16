@@ -116,7 +116,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		switch m.String() {
-		case "q", "ctrl+c":
+		case "q":
+			top := a.views[len(a.views)-1]
+			if v, ok := top.(interface{ InterceptsBackspace() bool }); ok && v.InterceptsBackspace() {
+				break
+			}
+			return a, tea.Quit
+		case "ctrl+c":
 			return a, tea.Quit
 		case "esc", "backspace":
 			// Let views that own a text input or mode (e.g. AnnotateView, TeamReportView in annotate mode)

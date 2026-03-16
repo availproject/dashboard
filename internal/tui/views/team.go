@@ -896,20 +896,36 @@ func (v *TeamReportView) renderContent() string {
 		} else if !hasConcerns {
 			c.WriteString(dimStyle.Render("(no concerns)") + "\n")
 		} else {
-			for _, concern := range v.goals.Concerns {
+			renderConcern := func(concern client.ConcernItem) {
 				badge := concernSeverityBadge(concern.Key, concern.Severity)
-				scopeStr := ""
-				switch strings.ToLower(concern.Scope) {
-				case "strategic":
-					scopeStr = "  " + dimStyle.Render("[STRATEGIC]")
-				case "sprint":
-					scopeStr = "  " + dimStyle.Render("[SPRINT]   ")
-				}
-				c.WriteString(badge + scopeStr + "  " + concern.Summary + "\n")
+				c.WriteString(badge + "  " + concern.Summary + "\n")
 				if concern.Explanation != "" {
 					for _, line := range wordWrap(concern.Explanation, v.wrapWidth()-4) {
 						c.WriteString("    " + noteStyle.Render(line) + "\n")
 					}
+				}
+			}
+			var strategic, sprint []client.ConcernItem
+			for _, concern := range v.goals.Concerns {
+				if strings.ToLower(concern.Scope) == "strategic" {
+					strategic = append(strategic, concern)
+				} else {
+					sprint = append(sprint, concern)
+				}
+			}
+			if len(strategic) > 0 {
+				c.WriteString(sectionHeading("Strategic") + "\n")
+				for _, concern := range strategic {
+					renderConcern(concern)
+				}
+			}
+			if len(sprint) > 0 {
+				if len(strategic) > 0 {
+					c.WriteString(dimStyle.Render("  " + strings.Repeat("─", 40)) + "\n")
+				}
+				c.WriteString(sectionHeading("Sprint") + "\n")
+				for _, concern := range sprint {
+					renderConcern(concern)
 				}
 			}
 		}

@@ -105,6 +105,10 @@ func (v *SectionAnnotateView) InterceptsBackspace() bool {
 	return v.mode == saModeEdit
 }
 
+// InterceptsEsc tells the App not to handle Esc directly — the view manages
+// both edit-mode cancel (→ list) and list-mode close (→ PopViewMsg with Init).
+func (v *SectionAnnotateView) InterceptsEsc() bool { return true }
+
 func (v *SectionAnnotateView) Init() tea.Cmd { return nil }
 
 func (v *SectionAnnotateView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -185,6 +189,8 @@ func (v *SectionAnnotateView) updateList(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return sectionDeletedMsg{idx: idx, err: err}
 			}
 		}
+	case "esc":
+		return v, func() tea.Msg { return msgs.PopViewMsg{} }
 	}
 	return v, nil
 }
