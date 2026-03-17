@@ -95,7 +95,8 @@ func setAuthCookies(w http.ResponseWriter, token, refreshToken string) {
 		Path:     "/",
 		MaxAge:   3600,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name:     "_dash_ref",
@@ -103,7 +104,8 @@ func setAuthCookies(w http.ResponseWriter, token, refreshToken string) {
 		Path:     "/",
 		MaxAge:   30 * 24 * 3600,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 
@@ -114,7 +116,8 @@ func clearAuthCookies(w http.ResponseWriter) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name:     "_dash_ref",
@@ -122,6 +125,7 @@ func clearAuthCookies(w http.ResponseWriter) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 	})
 }

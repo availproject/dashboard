@@ -97,24 +97,36 @@ go run ./cmd/server hash-password
 
 ### 4. Build and run
 
-```bash
-# Build both binaries
-go build -o bin/dashboard-server ./cmd/server
-go build -o bin/dashboard-tui ./cmd/tui
+The project uses a `Makefile` for common tasks. Run `make help` to see all targets:
 
-# Start the server
-./bin/dashboard-server -config config.yaml
-
-# In another terminal, start the TUI
-./bin/dashboard-tui
+```
+  build        Build the server binary
+  run          Build and run locally (foreground, no pm2)
+  deploy       Build and (re)start via pm2
+  stop         Stop the pm2 process
+  restart      Restart pm2 process without rebuilding
+  logs         Tail pm2 logs
+  status       Show pm2 status
+  clean        Remove built binary
 ```
 
-Or run directly without building:
+**Quick start (foreground):**
 
 ```bash
-go run ./cmd/server -config config.yaml
+make run
+# In another terminal, start the TUI
 go run ./cmd/tui
 ```
+
+**Persistent server via pm2:**
+
+```bash
+make deploy    # builds and starts (or restarts) the server under pm2
+make logs      # tail logs
+make status    # check process health
+```
+
+The pm2 config lives in `ecosystem.config.cjs`. The server auto-restarts on crash (up to 10 retries with a 3s delay). Logs go to `./logs/`.
 
 ## First Run
 
