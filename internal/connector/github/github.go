@@ -298,9 +298,9 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 	return nil
 }
 
-// Discover enumerates a github_repo root item, its labels, GitHub ProjectsV2,
-// and .md files for the target "owner/repo". The repo item is always first so
-// the discovery loop can resolve its catalogue ID before processing children.
+// Discover enumerates a github_repo root item and any GitHub ProjectsV2
+// linked to it. Labels and markdown files are no longer discovered — label-based
+// issue filtering was replaced by ProjectV2 board membership.
 func (c *Client) Discover(ctx context.Context, target string) ([]connector.DiscoveredItem, error) {
 	if err := c.checkToken(); err != nil {
 		return nil, err
@@ -321,18 +321,7 @@ func (c *Client) Discover(ctx context.Context, target string) ([]connector.Disco
 		SourceMeta: map[string]any{"owner": owner, "repo": repo},
 	}}
 
-	// 1. Labels (children of repo).
-	labelItems, err := c.discoverLabels(ctx, owner, repo)
-	if err != nil {
-		return nil, err
-	}
-	for i := range labelItems {
-		labelItems[i].ParentExternalID = repoExtID
-		labelItems[i].ParentSourceType = "github_repo"
-	}
-	items = append(items, labelItems...)
-
-	// 2. GitHub Projects (children of repo).
+	// GitHub Projects linked to this repo.
 	projectItems, err := c.discoverProjects(ctx, owner, repo)
 	if err == nil {
 		for i := range projectItems {
@@ -340,16 +329,6 @@ func (c *Client) Discover(ctx context.Context, target string) ([]connector.Disco
 			projectItems[i].ParentSourceType = "github_repo"
 		}
 		items = append(items, projectItems...)
-	}
-
-	// 3. Markdown files (children of repo).
-	mdItems, err := c.discoverMarkdownFiles(ctx, owner, repo)
-	if err == nil {
-		for i := range mdItems {
-			mdItems[i].ParentExternalID = repoExtID
-			mdItems[i].ParentSourceType = "github_repo"
-		}
-		items = append(items, mdItems...)
 	}
 
 	return items, nil
@@ -562,15 +541,12 @@ func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connecto
 		},
 	}}
 
-	// Discover labels and files from each linked repo.
-	// We call discoverLabels/discoverMarkdownFiles directly (not Discover) to
-	// avoid re-emitting the project via discoverProjects and creating cycles.
+	// Emit each linked repo as a child of the project.
 	for _, repo := range proj.Repositories.Nodes {
 		repoOwner := repo.Owner.Login
 		repoName := repo.Name
 		repoExtID := repoOwner + "/" + repoName
 
-		// Repo item as child of project.
 		items = append(items, connector.DiscoveredItem{
 			SourceType:       "github_repo",
 			ExternalID:       repoExtID,
@@ -580,26 +556,6 @@ func (c *Client) DiscoverProject(ctx context.Context, target string) ([]connecto
 			ParentExternalID: proj.ID,
 			ParentSourceType: "github_project",
 		})
-
-		// Labels as children of repo.
-		labels, err := c.discoverLabels(ctx, repoOwner, repoName)
-		if err == nil {
-			for i := range labels {
-				labels[i].ParentExternalID = repoExtID
-				labels[i].ParentSourceType = "github_repo"
-			}
-			items = append(items, labels...)
-		}
-
-		// Markdown files as children of repo.
-		mdFiles, err := c.discoverMarkdownFiles(ctx, repoOwner, repoName)
-		if err == nil {
-			for i := range mdFiles {
-				mdFiles[i].ParentExternalID = repoExtID
-				mdFiles[i].ParentSourceType = "github_repo"
-			}
-			items = append(items, mdFiles...)
-		}
 	}
 
 	return items, nil

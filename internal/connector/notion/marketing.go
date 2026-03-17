@@ -164,11 +164,15 @@ func buildMarketingFilter(projectLabel string) notion.Filter {
 		notion.OrCompoundFilter{
 			notion.PropertyFilter{
 				Property: mktPropStatus,
-				Status:   &notion.StatusFilterCondition{Equals: "In Progress"},
+				Status:   &notion.StatusFilterCondition{Equals: "In progress"},
 			},
 			notion.PropertyFilter{
 				Property: mktPropStatus,
-				Status:   &notion.StatusFilterCondition{Equals: "Not Started"},
+				Status:   &notion.StatusFilterCondition{Equals: "Not started"},
+			},
+			notion.PropertyFilter{
+				Property: mktPropStatus,
+				Status:   &notion.StatusFilterCondition{Equals: "To-do"},
 			},
 		},
 		notion.PropertyFilter{
@@ -179,7 +183,7 @@ func buildMarketingFilter(projectLabel string) notion.Filter {
 }
 
 // FetchMarketingCampaigns queries the marketing calendar database for campaigns
-// matching projectLabel with status "In Progress" or "Not Started".
+// matching projectLabel with status "In progress", "Not started", or "To-do".
 // For each campaign, linked task pages are fetched individually.
 // Note: relation properties with >100 items are not paginated (practically never occurs for campaigns).
 func (c *Client) FetchMarketingCampaigns(ctx context.Context, dbID, projectLabel string) ([]MarketingCampaign, error) {

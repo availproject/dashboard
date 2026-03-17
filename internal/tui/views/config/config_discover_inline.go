@@ -277,10 +277,18 @@ func (v *ConfigDiscoverInlineView) View() string {
 	}
 
 	// Input mode.
-	sb.WriteString(cfgDimStyle.Render("  Accepts: GitHub repo URL · Notion URL · owner/repo") + "\n\n")
+	sb.WriteString(cfgDimStyle.Render("  Accepts: GitHub repo URL · GitHub project board URL · Notion URL · owner/repo") + "\n")
+	sb.WriteString(cfgDimStyle.Render("  GitHub PAT requires: repo + read:project scopes") + "\n\n")
 	sb.WriteString("  URL: " + v.target.View() + "\n")
 	if v.errMsg != "" {
-		sb.WriteString("\n  Error: " + v.errMsg + "\n")
+		sb.WriteString("\n  Error: ")
+		for i, line := range wrapString(v.errMsg, 70) {
+			if i > 0 {
+				sb.WriteString("\n    ")
+			}
+			sb.WriteString(line)
+		}
+		sb.WriteString("\n")
 	}
 	sb.WriteString("\n" + cfgDimStyle.Render("  Enter to discover  ·  Esc to cancel") + "\n")
 	return sb.String()

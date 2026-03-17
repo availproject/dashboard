@@ -856,3 +856,23 @@ func truncate(s string, n int) string {
 	}
 	return s[:n-1] + "…"
 }
+
+// wrapString splits s into lines of at most width chars, breaking on spaces
+// where possible and hard-breaking long tokens (e.g. URLs) that exceed width.
+func wrapString(s string, width int) []string {
+	var lines []string
+	for len(s) > 0 {
+		if len(s) <= width {
+			lines = append(lines, s)
+			break
+		}
+		// Find last space within width.
+		cut := width
+		if idx := strings.LastIndex(s[:width], " "); idx > 0 {
+			cut = idx
+		}
+		lines = append(lines, s[:cut])
+		s = strings.TrimLeft(s[cut:], " ")
+	}
+	return lines
+}

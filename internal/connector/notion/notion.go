@@ -435,6 +435,16 @@ func blockToText(block notion.Block) string {
 			}
 			return b.Bookmark.URL
 		}
+	case *notion.EmbedBlock:
+		// Embed blocks and link previews contain a raw URL (e.g. a GitHub project
+		// board pasted into the page). Emit it so the AI can extract it.
+		if b.Embed.URL != "" {
+			return b.Embed.URL
+		}
+	case *notion.LinkPreviewBlock:
+		if b.LinkPreview.URL != "" {
+			return b.LinkPreview.URL
+		}
 	case *notion.LinkToPageBlock:
 		// Link-to-page blocks reference another Notion page by ID.
 		if b.LinkToPage.PageID != "" {
@@ -456,15 +466,14 @@ func blockChildrenUseful(block notion.Block) bool {
 		*notion.ChildDatabaseBlock,
 		*notion.LinkToPageBlock,
 		*notion.TableBlock,
-		*notion.ColumnListBlock,
-		*notion.ColumnBlock,
 		*notion.ImageBlock,
 		*notion.VideoBlock,
 		*notion.FileBlock,
 		*notion.PdfBlock,
 		*notion.BookmarkBlock,
 		*notion.DividerBlock,
-		*notion.EmbedBlock:
+		*notion.EmbedBlock,
+		*notion.LinkPreviewBlock:
 		return false
 	}
 	return true
