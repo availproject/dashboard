@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/your-org/dashboard/internal/tui/client"
+	"github.com/your-org/dashboard/internal/tui/msgs"
 )
 
 // ---- internal message types ----
@@ -198,6 +199,8 @@ func (v *ConfigTeamsView) handleTeamListKey(key string) (tea.Model, tea.Cmd) {
 			v.confirmMsg = fmt.Sprintf("Delete team %q? [y/N]", t.Name)
 			v.mode = cfgTeamsModeConfirmDeleteTeam
 		}
+	case "esc":
+		return v, func() tea.Msg { return msgs.PopViewMsg{} }
 	}
 	return v, nil
 }
@@ -240,6 +243,11 @@ func (v *ConfigTeamsView) handleExpandedKey(key string) (tea.Model, tea.Cmd) {
 			v.input.SetValue(current)
 			v.input.Focus()
 			v.mode = cfgTeamsModeInputMarketingLabel
+		}
+	case "s":
+		if t := v.currentTeam(); t != nil {
+			sv := NewConfigTeamSlotsView(v.c, t.ID, t.Name)
+			return v, func() tea.Msg { return msgs.PushViewMsg{View: sv} }
 		}
 	}
 	return v, nil
@@ -413,7 +421,7 @@ func (v *ConfigTeamsView) View() string {
 
 func (v *ConfigTeamsView) footer() string {
 	if v.expanded {
-		return "\n" + cfgDimStyle.Render("  j/k navigate members  ·  n add member  ·  e edit  ·  d delete  ·  m marketing label  ·  Esc collapse") + "\n"
+		return "\n" + cfgDimStyle.Render("  j/k navigate members  ·  n add member  ·  e edit  ·  d delete  ·  m marketing label  ·  s sources  ·  Esc collapse") + "\n"
 	}
 	return "\n" + cfgDimStyle.Render("  j/k navigate  ·  Enter expand  ·  n new team  ·  e rename  ·  d delete  ·  Esc back") + "\n"
 }

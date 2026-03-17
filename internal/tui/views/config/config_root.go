@@ -63,7 +63,7 @@ func (v *ConfigRootView) pushSubView() tea.Cmd {
 	var subView tea.Model
 	switch v.cursor {
 	case 0: // Teams
-		subView = NewConfigTeamListView(v.c)
+		subView = NewConfigTeamsView(v.c)
 	case 1: // Org
 		subView = NewConfigOrgSlotsView(v.c)
 	case 2: // All Sources
