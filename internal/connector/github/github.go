@@ -779,6 +779,9 @@ func (c *Client) FetchMergedPRs(ctx context.Context, owner, repo string, since t
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repo, opts)
 		if err != nil {
+			if resp != nil && resp.StatusCode == http.StatusForbidden {
+				return nil, &connector.ErrPermissionDenied{Resource: owner + "/" + repo}
+			}
 			return nil, fmt.Errorf("github: list pull requests: %w", err)
 		}
 		done := false
@@ -845,6 +848,9 @@ func (c *Client) FetchCommits(ctx context.Context, owner, repo string, since, un
 			// 409 means the repository exists but has no commits yet — treat as empty.
 			if resp != nil && resp.StatusCode == http.StatusConflict {
 				return result, nil
+			}
+			if resp != nil && resp.StatusCode == http.StatusForbidden {
+				return nil, &connector.ErrPermissionDenied{Resource: owner + "/" + repo}
 			}
 			return nil, fmt.Errorf("github: list commits: %w", err)
 		}

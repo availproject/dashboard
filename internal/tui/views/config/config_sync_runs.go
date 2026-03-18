@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -432,7 +433,28 @@ func (v *ConfigSyncRunsView) renderDetail() string {
 	}
 	header.WriteString("\n")
 	if run.Error != nil {
-		header.WriteString(fmt.Sprintf("  Error:  %s\n", *run.Error))
+		var errMap map[string]string
+		if json.Unmarshal([]byte(*run.Error), &errMap) == nil {
+			if permDenied, ok := errMap["github:perm_denied"]; ok && permDenied != "" {
+				repos := strings.Split(permDenied, ",")
+				header.WriteString(syncRed.Render(fmt.Sprintf("  Perms:  token denied access to %d repo(s): %s\n",
+					len(repos), strings.Join(repos, ", "))))
+			}
+			var otherKeys []string
+			for k := range errMap {
+				if k != "github:perm_denied" {
+					otherKeys = append(otherKeys, k)
+				}
+			}
+			if len(otherKeys) > 0 {
+				sort.Strings(otherKeys)
+				for _, k := range otherKeys {
+					header.WriteString(fmt.Sprintf("  Error:  %s: %s\n", k, errMap[k]))
+				}
+			}
+		} else {
+			header.WriteString(fmt.Sprintf("  Error:  %s\n", *run.Error))
+		}
 	}
 
 	footer := "\n" + cfgDimStyle.Render("  j/k move  ·  Enter/Space expand  ·  Esc back") + "\n"

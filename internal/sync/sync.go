@@ -481,6 +481,25 @@ func (e *Engine) fetchTeamData(ctx context.Context, teamID int64, errs map[strin
 	ghWg.Wait()
 	timings.record(prefix+"github_fetch_ms", githubStart)
 
+	// Consolidate permission-denied repos into a single log line and a dedicated
+	// error key so the UI can surface them clearly.
+	permDeniedSet := map[string]bool{}
+	for _, errMsg := range errs {
+		if strings.HasPrefix(errMsg, "permission denied: ") {
+			permDeniedSet[strings.TrimPrefix(errMsg, "permission denied: ")] = true
+		}
+	}
+	if len(permDeniedSet) > 0 {
+		repos := make([]string, 0, len(permDeniedSet))
+		for r := range permDeniedSet {
+			repos = append(repos, r)
+		}
+		sort.Strings(repos)
+		log.Printf("WARN  sync [team %d]: %d repo(s) inaccessible due to token permissions: %s",
+			teamID, len(repos), strings.Join(repos, ", "))
+		errs["github:perm_denied"] = strings.Join(repos, ",")
+	}
+
 	// Auto-close board items that are terminal-status but still open on GitHub.
 	// Uses allBoardItems so items from any sprint (not just current) are caught.
 	autoCloseStart := time.Now()

@@ -20,6 +20,16 @@ func NewErrCredentialsMissing(varName string) error {
 	return &ErrCredentialsMissing{VarName: varName}
 }
 
+// ErrPermissionDenied is returned when a connector gets a 403 from the remote
+// API, indicating the token lacks access to the named resource.
+type ErrPermissionDenied struct {
+	Resource string
+}
+
+func (e *ErrPermissionDenied) Error() string {
+	return "permission denied: " + e.Resource
+}
+
 // DiscoveredItem represents a single item discovered from an external source.
 // ParentExternalID + ParentSourceType identify the parent item if this item
 // is a child of another discovered item (e.g. a label under a repo, or a
