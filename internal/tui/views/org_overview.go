@@ -339,6 +339,25 @@ func (v *OrgOverviewView) renderTeamCard(i int, team client.OrgTeamItem) string 
 	return strings.Join(lines, "\n") + "\n\n"
 }
 
+// calendarPanelLines renders the calendar panel as a slice of lines.
+func (v *OrgOverviewView) calendarPanelLines() []string {
+	var c strings.Builder
+	c.WriteString(strings.TrimRight(v.renderCalendarGrid(), "\n"))
+	heading := sectionHeading("📅 Calendar")
+	calBody := heading + "\n\n" + strings.TrimRight(c.String(), "\n")
+	boxed := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("238")).
+		Width(v.panelW()).
+		Padding(0, 1).
+		Render(calBody)
+	var out []string
+	for _, l := range strings.Split(strings.TrimRight(boxed, "\n"), "\n") {
+		out = append(out, "  "+l)
+	}
+	return out
+}
+
 // bodyContent builds the full scrollable body as a slice of lines.
 func (v *OrgOverviewView) bodyContent() []string {
 	var lines []string
@@ -356,25 +375,16 @@ func (v *OrgOverviewView) bodyContent() []string {
 		if v.syncMsg != "" && !v.syncing {
 			lines = append(lines, "  "+syncBannerStyle.Render(v.syncMsg), "")
 		}
+
+		// Calendar at the top
+		lines = append(lines, v.calendarPanelLines()...)
+		lines = append(lines, "")
+
+		// Team cards below
 		for i, team := range v.data.Teams {
 			card := strings.TrimRight(v.renderTeamCard(i, team), "\n")
 			lines = append(lines, strings.Split(card, "\n")...)
-			lines = append(lines, "") // blank separator already in renderTeamCard, keep one
-		}
-
-		// Calendar panel
-		var c strings.Builder
-		c.WriteString(strings.TrimRight(v.renderCalendarGrid(), "\n"))
-		heading := sectionHeading("📅 Calendar")
-		calBody := heading + "\n\n" + strings.TrimRight(c.String(), "\n")
-		boxed := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("238")).
-			Width(v.panelW()).
-			Padding(0, 1).
-			Render(calBody)
-		for _, l := range strings.Split(strings.TrimRight(boxed, "\n"), "\n") {
-			lines = append(lines, "  "+l)
+			lines = append(lines, "")
 		}
 	}
 
@@ -400,6 +410,9 @@ func (v *OrgOverviewView) cardLineRanges() [][2]int {
 	if v.syncMsg != "" && !v.syncing {
 		cursor += 2
 	}
+
+	// Calendar panel now sits above the team cards.
+	cursor += len(v.calendarPanelLines()) + 1 // +1 for blank separator line
 
 	for i, team := range v.data.Teams {
 		start := cursor
@@ -569,12 +582,15 @@ func (v *OrgOverviewView) renderCalendarGrid() string {
 		sb.WriteString("\n")
 	}
 
-	// Events for both displayed months combined
+	// Events for both displayed months combined (sprint start/end excluded)
 	periodStart := month1.Format("2006-01-02")
 	periodEnd := month2.AddDate(0, 1, -1).Format("2006-01-02")
 	var events []client.OrgCalendarEvent
 	if v.calendar != nil {
 		for _, e := range v.calendar.Events {
+			if e.EventType == "sprint_start" || e.EventType == "sprint_end" {
+				continue
+			}
 			if e.Date >= periodStart && e.Date <= periodEnd {
 				events = append(events, e)
 			}
@@ -616,6 +632,9 @@ func (v *OrgOverviewView) monthGridLines(month time.Time) []string {
 	dayEvents := map[int][]client.OrgCalendarEvent{}
 	if v.calendar != nil {
 		for _, e := range v.calendar.Events {
+			if e.EventType == "sprint_start" || e.EventType == "sprint_end" {
+				continue
+			}
 			if e.Date >= monthStart && e.Date <= monthEnd {
 				if t, err := time.Parse("2006-01-02", e.Date); err == nil {
 					dayEvents[t.Day()] = append(dayEvents[t.Day()], e)
