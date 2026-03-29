@@ -166,12 +166,30 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if v.data != nil && v.cursor < len(v.data.Teams)-1 {
 				v.cursor++
 				v.scrollOffset = v.clampedScrollForCursor(v.cursor)
+			} else {
+				// At last team (or no data): scroll down to reveal content below.
+				v.scrollOffset += v.halfPage()
 			}
 			return v, nil
 		case "k", "up":
 			if v.cursor > 0 {
 				v.cursor--
 				v.scrollOffset = v.clampedScrollForCursor(v.cursor)
+			} else {
+				// At first team: scroll up.
+				v.scrollOffset -= v.halfPage()
+				if v.scrollOffset < 0 {
+					v.scrollOffset = 0
+				}
+			}
+			return v, nil
+		case "ctrl+d":
+			v.scrollOffset += v.halfPage()
+			return v, nil
+		case "ctrl+u":
+			v.scrollOffset -= v.halfPage()
+			if v.scrollOffset < 0 {
+				v.scrollOffset = 0
 			}
 			return v, nil
 		case "enter":
@@ -391,6 +409,15 @@ func (v *OrgOverviewView) cardLineRanges() [][2]int {
 		ranges[i] = [2]int{start, cursor}
 	}
 	return ranges
+}
+
+// halfPage returns half the available body height, minimum 1.
+func (v *OrgOverviewView) halfPage() int {
+	half := (v.height - 2) / 2
+	if half < 1 {
+		half = 1
+	}
+	return half
 }
 
 // clampedScrollForCursor returns a scrollOffset that keeps the given cursor's card visible.
@@ -668,7 +695,7 @@ func (v *OrgOverviewView) footer() string {
 	}
 	hBg := lipgloss.Color("17")
 	content := lipgloss.NewStyle().Background(hBg).Foreground(lipgloss.Color("8")).
-		Render("  j/k navigate  ·  Enter drill in  ·  R sync org  ·  [ ] months  ·  c config  ·  q quit")
+		Render("  j/k navigate  ·  ^d/^u scroll  ·  Enter drill in  ·  R sync org  ·  [ ] months  ·  c config  ·  q quit")
 	gap := w - lipgloss.Width(content)
 	if gap < 0 {
 		gap = 0
