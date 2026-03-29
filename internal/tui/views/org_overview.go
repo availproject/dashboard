@@ -67,6 +67,9 @@ type OrgOverviewView struct {
 	width   int
 	height  int
 
+	// vertical scroll
+	scrollOffset int // number of body lines scrolled from top
+
 	// calendar
 	calendar        *client.OrgCalendarResponse
 	calendarLoading bool
@@ -162,11 +165,13 @@ func (v *OrgOverviewView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down":
 			if v.data != nil && v.cursor < len(v.data.Teams)-1 {
 				v.cursor++
+				v.scrollOffset = v.clampedScrollForCursor(v.cursor)
 			}
 			return v, nil
 		case "k", "up":
 			if v.cursor > 0 {
 				v.cursor--
+				v.scrollOffset = v.clampedScrollForCursor(v.cursor)
 			}
 			return v, nil
 		case "enter":
@@ -316,68 +321,137 @@ func (v *OrgOverviewView) renderTeamCard(i int, team client.OrgTeamItem) string 
 	return strings.Join(lines, "\n") + "\n\n"
 }
 
-// View implements tea.Model.
-func (v *OrgOverviewView) View() string {
-	// ── Build body content ─────────────────────────────────────────────────
-	var body strings.Builder
-	body.WriteString("\n")
+// bodyContent builds the full scrollable body as a slice of lines.
+func (v *OrgOverviewView) bodyContent() []string {
+	var lines []string
+	lines = append(lines, "") // top margin
 
-	// Error
 	if v.errMsg != "" {
-		body.WriteString("  " + errorStyle.Render("Error: "+v.errMsg) + "\n\n")
+		lines = append(lines, "  "+errorStyle.Render("Error: "+v.errMsg), "")
 	}
 
 	if v.loading {
-		body.WriteString("  Loading…\n")
+		lines = append(lines, "  Loading…")
 	} else if v.data == nil || len(v.data.Teams) == 0 {
-		body.WriteString("  No data yet. Press R to sync.\n")
+		lines = append(lines, "  No data yet. Press R to sync.")
 	} else {
-		// Sync banner
 		if v.syncMsg != "" && !v.syncing {
-			body.WriteString("  " + syncBannerStyle.Render(v.syncMsg) + "\n\n")
+			lines = append(lines, "  "+syncBannerStyle.Render(v.syncMsg), "")
 		}
-
-		// ── Team cards ────────────────────────────────────────────────────
 		for i, team := range v.data.Teams {
-			body.WriteString(v.renderTeamCard(i, team))
+			card := strings.TrimRight(v.renderTeamCard(i, team), "\n")
+			lines = append(lines, strings.Split(card, "\n")...)
+			lines = append(lines, "") // blank separator already in renderTeamCard, keep one
 		}
 
-		// ── Calendar ──────────────────────────────────────────────────────
+		// Calendar panel
 		var c strings.Builder
 		c.WriteString(strings.TrimRight(v.renderCalendarGrid(), "\n"))
-		borderColor := lipgloss.Color("238")
 		heading := sectionHeading("📅 Calendar")
 		calBody := heading + "\n\n" + strings.TrimRight(c.String(), "\n")
 		boxed := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
+			BorderForeground(lipgloss.Color("238")).
 			Width(v.panelW()).
 			Padding(0, 1).
 			Render(calBody)
-		calLines := strings.Split(strings.TrimRight(boxed, "\n"), "\n")
-		for i := range calLines {
-			calLines[i] = "  " + calLines[i]
+		for _, l := range strings.Split(strings.TrimRight(boxed, "\n"), "\n") {
+			lines = append(lines, "  "+l)
 		}
-		body.WriteString(strings.Join(calLines, "\n") + "\n")
 	}
 
-	// ── Assemble: sticky header, padded body, sticky footer ───────────────
-	bodyStr := strings.TrimRight(body.String(), "\n")
-	bodyLines := strings.Count(bodyStr, "\n") + 1
+	return lines
+}
 
-	// height - 2 = space between header and footer
+// cardLineRanges returns the [start, end) line indices (within bodyContent) for each team card.
+func (v *OrgOverviewView) cardLineRanges() [][2]int {
+	if v.data == nil {
+		return nil
+	}
+	ranges := make([][2]int, len(v.data.Teams))
+	cursor := 1 // skip top margin line
+
+	if v.errMsg != "" {
+		cursor += 2
+	}
+
+	if v.loading || v.data == nil || len(v.data.Teams) == 0 {
+		return ranges
+	}
+
+	if v.syncMsg != "" && !v.syncing {
+		cursor += 2
+	}
+
+	for i, team := range v.data.Teams {
+		start := cursor
+		card := strings.TrimRight(v.renderTeamCard(i, team), "\n")
+		n := strings.Count(card, "\n") + 1 + 1 // card lines + blank separator
+		cursor += n
+		ranges[i] = [2]int{start, cursor}
+	}
+	return ranges
+}
+
+// clampedScrollForCursor returns a scrollOffset that keeps the given cursor's card visible.
+func (v *OrgOverviewView) clampedScrollForCursor(cursor int) int {
 	available := v.height - 2
-	if available < 0 {
-		available = 0
+	if available <= 0 {
+		return v.scrollOffset
 	}
-	padding := available - bodyLines
-	if padding < 0 {
-		padding = 0
+	ranges := v.cardLineRanges()
+	if cursor < 0 || cursor >= len(ranges) {
+		return v.scrollOffset
+	}
+	cardStart, cardEnd := ranges[cursor][0], ranges[cursor][1]
+	offset := v.scrollOffset
+	if cardStart < offset {
+		offset = cardStart
+	}
+	if cardEnd > offset+available {
+		offset = cardEnd - available
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return offset
+}
+
+// View implements tea.Model.
+func (v *OrgOverviewView) View() string {
+	available := v.height - 2 // lines between header and footer
+	if available < 1 {
+		available = 1
+	}
+
+	lines := v.bodyContent()
+
+	// Clamp scrollOffset
+	offset := v.scrollOffset
+	maxOffset := len(lines) - available
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	end := offset + available
+	if end > len(lines) {
+		end = len(lines)
+	}
+	visible := lines[offset:end]
+
+	// Pad to fill the available space so the footer stays pinned.
+	for len(visible) < available {
+		visible = append(visible, "")
 	}
 
 	return v.renderHeader() + "\n" +
-		bodyStr + "\n" +
-		strings.Repeat("\n", padding) +
+		strings.Join(visible, "\n") + "\n" +
 		v.footer()
 }
 
