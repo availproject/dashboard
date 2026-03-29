@@ -598,7 +598,18 @@ func (v *OrgOverviewView) renderCalendarGrid() string {
 	}
 	if len(events) > 0 {
 		sb.WriteString("\n")
+		today := time.Now().Format("2006-01-02")
+		pastDividerWritten := false
+		futureDividerWritten := false
 		for _, e := range events {
+			// Insert a "today" divider between past and upcoming events.
+			if !pastDividerWritten && e.Date < today {
+				pastDividerWritten = true
+			}
+			if !futureDividerWritten && pastDividerWritten && e.Date >= today {
+				futureDividerWritten = true
+				sb.WriteString("  " + dimStyle.Render("┄┄┄ today ┄┄┄") + "\n")
+			}
 			t, _ := time.Parse("2006-01-02", e.Date)
 			dateStr := t.Format("Jan 02")
 			color, _ := v.teamCalendarInfo(e.TeamID)
